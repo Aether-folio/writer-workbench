@@ -1,0 +1,20 @@
+{
+  "name": "writer-workbench-local",
+  "interface": {
+    "displayName": "Writer Workbench"
+  },
+  "plugins": [
+    {
+      "name": "writer-workbench",
+      "source": {
+        "source": "local",
+        "path": "./runtime"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

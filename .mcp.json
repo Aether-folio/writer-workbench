@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "writer_workbench": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/dist/server.mjs"
+      ],
+      "cwd": "${PLUGIN_ROOT}",
+      "env_vars": [
+        "WORKBENCH_WORKSPACE"
+      ]
+    }
+  }
+}

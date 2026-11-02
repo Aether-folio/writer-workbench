@@ -1,0 +1,32 @@
+{
+  "name": "writer-workbench",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-all.mjs",
+    "test": "node --test tests/core.test.mjs tests/annotations.test.mjs tests/workspace.test.mjs tests/server.test.mjs tests/sidebar.test.mjs",
+    "build:core": "node scripts/build.mjs",
+    "test:dsh": "node --test dsh/tests/*.test.mjs",
+    "test:browser": "node tests/browser.cjs",
+    "test:focus": "node tests/trash-focus.browser.cjs",
+    "privacy:check": "node scripts/check-public-files.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@openai/mcp-extensions": "0.2.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "playwright": "1.64.1"
+  },
+  "description": "本地码字工作台：Codex 插件与 DeepSeek Harness 适配层。",
+  "license": "MIT",
+  "author": "Local Writing Tools",
+  "engines": {
+    "node": ">=22"
+  }
+}

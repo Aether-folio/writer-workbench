@@ -1,0 +1,4 @@
+- insert:
+    - id: writer-workbench
+      name: dsh-writer-workbench
+      config: {}

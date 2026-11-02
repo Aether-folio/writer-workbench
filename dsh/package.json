@@ -1,0 +1,33 @@
+{
+  "name": "dsh-writer-workbench",
+  "version": "0.3.0-dsh.3",
+  "private": true,
+  "description": "码字工作台的 DeepSeek Harness 适配层：复用原 Codex 插件的编辑器界面与本地数据，提供 open_workbench / workbench_status 工具和聊天草稿引用。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "assets",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "icon": "assets/icon.svg",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  }
+}
