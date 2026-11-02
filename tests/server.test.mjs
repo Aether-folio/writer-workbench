@@ -24,6 +24,8 @@ test('正式MCP协议可列出两个入口、读取自含界面且不访问正�
     const resource=await client.readResource({uri:open._meta.ui.resourceUri});
     assert.equal(resource.contents[0].mimeType,'text/html;profile=mcp-app');
     assert.ok(resource.contents[0].text.includes('draft-body'));
+    assert.ok(resource.contents[0].text.includes('id="shelf-home"'), 'MCP must serve the editor with its return-to-bookshelf button');
+    assert.ok(resource.contents[0].text.includes('id="shelf-page"'), 'MCP must serve the bookshelf page');
     assert.ok(resource.contents[0].text.includes('stats-pet-enabled'));
     assert.equal((resource.contents[0].text.match(/data:image\/gif;base64,/g) || []).length,4);
     assert.deepEqual(resource.contents[0]._meta['openai/ui'].availableDisplayModes,['fullscreen','inline']);
