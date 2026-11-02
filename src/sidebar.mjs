@@ -64,7 +64,7 @@ export function documentHeadings(body) {
 }
 
 export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRenameFolder,onSelectFolder,showEditor}) {
-  const $=id=>document.getElementById(id),closedFolders=new Set();
+  const $=id=>document.getElementById(id),openFolders=new Set();
   let currentPath='',outlineTimer;
   const fileStem=name=>name.replace(/\.(md|txt)$/i,'');
   function startRename(row,button,node) {
@@ -175,7 +175,8 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
       for(const node of nodes) {
         if(node.children) {
           const folder=document.createElement('details');folder.className='file-folder';folder.dataset.path=node.path;
-          folder.open=!closedFolders.has(node.path) || changed && path.startsWith(node.path+'/');
+          if(changed && path.startsWith(node.path+'/'))openFolders.add(node.path);
+          folder.open=openFolders.has(node.path);
           const heading=document.createElement('summary');heading.title=node.path+'\n右键重命名（F2）';
           const label=document.createElement('span');label.className='folder-name';label.textContent=node.name;heading.append(label);
           heading.addEventListener('click',()=>onSelectFolder(node.path));
@@ -186,7 +187,7 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
           const children=document.createElement('div');children.className='folder-children';
           // Keep summary as the first child for native disclosure and keyboard support.
           heading.append(create);folder.append(heading,children);parent.append(folder);append(node.children,children);
-          folder.addEventListener('toggle',()=>{if(folder.isConnected){if(folder.open)closedFolders.delete(node.path);else closedFolders.add(node.path);}});
+          folder.addEventListener('toggle',()=>{if(folder.isConnected){if(folder.open)openFolders.add(node.path);else openFolders.delete(node.path);}});
         } else {
           const row=document.createElement('div');row.className='file-row';
           const button=document.createElement('button');button.type='button';button.className='file-entry';button.textContent=node.name;button.title=node.path+'\n右键重命名（F2）';button.setAttribute('aria-current',String(node.path===path));
@@ -256,7 +257,7 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
   }
   function showSidebar() {setCollapsed(false);}
   /** 打开作品时展开对应文件夹，避免它此前被手动收起后仍保持折叠。 */
-  function reveal(folderPath) {if(typeof folderPath==='string' && folderPath)closedFolders.delete(folderPath);}
+  function reveal(folderPath) {if(typeof folderPath==='string' && folderPath)openFolders.add(folderPath);}
   const toggleFromButton=()=>setCollapsed(!document.querySelector('.workspace-shell')?.classList.contains('sidebar-collapsed'),true);
   $('sidebar-toggle').addEventListener('click',toggleFromButton);
   $('sidebar-reopen').addEventListener('click',toggleFromButton);
