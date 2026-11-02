@@ -19,6 +19,20 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const {pathToFileURL} = require('node:url');
 
+// Electron 默认会给未捕获异常弹错误框并卡住；测试里直接打印并退出。
+// stdout/stderr 可能被父进程或重定向提前关闭，先吞掉 EPIPE，避免测试进程弹「主进程 JS 错误」。
+for (const stream of [process.stdout, process.stderr]) {
+  if (stream && typeof stream.on === 'function') stream.on('error', () => {});
+}
+process.on('uncaughtException', error => {
+  try { console.error('E2E uncaught exception:', error); } catch {}
+  process.exit(1);
+});
+process.on('unhandledRejection', error => {
+  try { console.error('E2E unhandled rejection:', error); } catch {}
+  process.exit(1);
+});
+
 const HERE = __dirname;
 const ROOT = path.resolve(HERE, '..', '..');
 const EDITOR = path.join(ROOT, 'assets', 'editor.html');
@@ -87,7 +101,9 @@ async function main() {
     version: 'e2e',
   });
   await runtime.workspace.init();
-  await fs.mkdir(path.join(temp, '码字工作台', '测试作品', '正文'), {recursive: true});
+  for (const folder of ['设定', '正文', '草稿']) {
+    await fs.mkdir(path.join(temp, '码字工作台', '测试作品', folder), {recursive: true});
+  }
   await fs.writeFile(
     path.join(temp, '码字工作台', '测试作品', '正文', '第001章.md'),
     '# 第一章\n\n这是一段已经存在的正文。\n',
@@ -164,19 +180,37 @@ async function main() {
         wordTotal: doc.getElementById('word-total').textContent,
         petDisabled: doc.getElementById('stats-pet-enabled').disabled,
         petChoiceDisabled: doc.getElementById('stats-pet-choice').disabled,
+        shelfVisible: !doc.getElementById('shelf-page').hidden,
+        editorHidden: doc.getElementById('editor-page').hidden,
+        sidebarWidth: Math.round(doc.getElementById('workbench-sidebar').getBoundingClientRect().width),
+        books: [...doc.querySelectorAll('.shelf-book')].map(node => node.querySelector('.book-title')?.textContent || ''),
+        addTile: Boolean(doc.querySelector('.shelf-add')),
+        subtitle: doc.getElementById('shelf-subtitle').textContent,
       };
     })()`);
     console.log('  ' + JSON.stringify(snapshot));
     if (!snapshot.files.includes('第001章.md')) failures.push('文件树没有渲染出第001章.md');
     if (snapshot.filesStatus) failures.push('文件计数提示仍在显示：' + snapshot.filesStatus);
     if (snapshot.petDisabled) failures.push('萌宠设置未启用（stats_preferences 未返回 pet）');
+    if (!snapshot.shelfVisible) failures.push('工作台首页不是书架');
+    if (!snapshot.editorHidden) failures.push('书架打开时编辑页仍然显示');
+    if (snapshot.sidebarWidth !== 0) failures.push('书架打开时文稿侧栏不应显示');
+    if (!snapshot.books.includes('《测试作品》')) failures.push('书架没有渲染测试作品：' + JSON.stringify(snapshot.books));
+    if (!snapshot.addTile) failures.push('有作品时书架缺少添加入口');
+    if (!snapshot.subtitle.includes('1 部作品')) failures.push('书架副标题没有统计作品：' + snapshot.subtitle);
+    await fs.mkdir(path.resolve(ROOT, '..', 'test-results'), {recursive: true});
+    const screenshotDir = path.resolve(ROOT, '..', 'test-results');
+    await fs.writeFile(path.join(screenshotDir, 'dsh-shelf.png'), (await win.webContents.capturePage()).toPNG());
 
-    // 打开文稿，确认正文与大纲链路。
+    // 点书架封面：应打开对应作品最近更新的正文，并展开文稿侧栏。
     const opened = await win.webContents.executeJavaScript(`(async () => {
       const doc = document.getElementById('wb').contentDocument;
-      doc.querySelector('.file-entry').click();
-      await new Promise(resolve => setTimeout(resolve, 600));
+      doc.querySelector('.shelf-book').click();
+      await new Promise(resolve => setTimeout(resolve, 900));
       return {
+        editorVisible: !doc.getElementById('editor-page').hidden,
+        shelfHidden: doc.getElementById('shelf-page').hidden,
+        sidebarWidth: Math.round(doc.getElementById('workbench-sidebar').getBoundingClientRect().width),
         title: doc.getElementById('draft-title').value,
         body: doc.getElementById('draft-body').value,
         documentStatus: doc.getElementById('document-status').textContent,
@@ -184,6 +218,11 @@ async function main() {
     })()`);
     console.log('  ' + JSON.stringify(opened));
     if (!opened.body.includes('这是一段已经存在的正文')) failures.push('打开文稿后正文没有加载');
+    if (!opened.editorVisible) failures.push('点击书架封面后编辑页没有打开');
+    if (!opened.shelfHidden) failures.push('点击书架封面后书架没有隐藏');
+    if (opened.sidebarWidth <= 0) failures.push('点击书架封面后文稿侧栏没有展开');
+    if (opened.title !== '第001章') failures.push('点击书架封面没有打开作品正文：' + opened.title);
+    if (!opened.documentStatus.includes('测试作品/正文/第001章.md')) failures.push('书架打开的文稿路径不正确：' + opened.documentStatus);
 
     // 打开文稿后标题输入框应可编辑，回车重命名会改文件名。
     const editable = await win.webContents.executeJavaScript(`(() => {
@@ -336,7 +375,6 @@ async function main() {
     })()`);
     if(focus.during.sidebar || focus.during.footer || !focus.during.exit || !focus.during.float || !focus.restored || !focus.escaped || !focus.unchanged || !focus.floatUnchanged || focus.titleSize<16 || focus.fileHint || !focus.trashLabel.includes('回收站') || Math.abs(focus.during.bounds.width-focus.during.width)>1 || Math.abs(focus.during.bounds.height-focus.during.height)>1)failures.push('全屏或提示检查失败：'+JSON.stringify(focus));
     console.log('✓ Fullscreen layout / exit / text preservation / work title / clean hints');
-    const screenshotDir=path.resolve(ROOT,'..','test-results');
     await win.webContents.executeJavaScript("document.getElementById('wb').contentDocument.getElementById('writing-fullscreen').click()");
     await delay(120);await fs.writeFile(path.join(screenshotDir,'dsh-writing-fullscreen.png'),(await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript("document.getElementById('wb').contentDocument.getElementById('writing-fullscreen-exit').click()");

@@ -159,6 +159,15 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     window.addEventListener('resize',closeFileMenu);
     document.addEventListener('keydown',event=>{if(event.key==='Escape' && !menu.hidden)closeFileMenu();});
   }
+  function scrollToCurrent() {
+    const list=$('file-list');
+    if(!list || list.clientHeight<=0) return;
+    const active=list.querySelector('.file-entry[aria-current="true"]');
+    if(!active) return;
+    const row=active.getBoundingClientRect(),view=list.getBoundingClientRect();
+    if(row.top<view.top)list.scrollTop-=view.top-row.top;
+    else if(row.bottom>view.bottom)list.scrollTop+=row.bottom-view.bottom;
+  }
   function renderFiles(files,path,directories=[]) {
     const changed=path!==currentPath;currentPath=path;
     const list=$('file-list');list.replaceChildren();
@@ -191,6 +200,7 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
       }
     }
     append(fileTree(files,directories),list);
+    if(changed) scrollToCurrent();
     $('files-status').textContent=files.length ? '' : '暂无文稿，可在文件夹旁点击 ＋ 新建。';
     $('files-status').hidden=Boolean(files.length);
   }
@@ -232,15 +242,24 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     });
   }
   editor.addEventListener('input',()=>{clearTimeout(outlineTimer);if(!$('sidebar-outline-panel').hidden)outlineTimer=setTimeout(renderOutline,180);});
-  function toggleSidebar() {
-    const collapsed=document.querySelector('.workspace-shell').classList.toggle('sidebar-collapsed'),toggle=$('sidebar-toggle');
-    toggle.setAttribute('aria-expanded',String(!collapsed));toggle.setAttribute('aria-label',collapsed?'展开侧栏':'收起侧栏');toggle.title=collapsed?'展开侧栏':'收起侧栏';
+  function setCollapsed(collapsed,focus=false) {
+    const shell=document.querySelector('.workspace-shell');
+    if(!shell)return;
+    shell.classList.toggle('sidebar-collapsed',collapsed);
+    const toggle=$('sidebar-toggle');
+    toggle.setAttribute('aria-expanded',String(!collapsed));
+    const label=collapsed?'展开侧栏':'收起侧栏';
+    toggle.setAttribute('aria-label',label);toggle.title=label;
     toggle.hidden=collapsed;
     $('sidebar-reopen').hidden=!collapsed;$('sidebar-reopen').setAttribute('aria-expanded',String(!collapsed));
-    (collapsed?$('sidebar-reopen'):toggle).focus({preventScroll:true});
+    if(focus)(collapsed?$('sidebar-reopen'):toggle).focus({preventScroll:true});
   }
-  $('sidebar-toggle').addEventListener('click',toggleSidebar);
-  $('sidebar-reopen').addEventListener('click',toggleSidebar);
+  function showSidebar() {setCollapsed(false);}
+  /** 打开作品时展开对应文件夹，避免它此前被手动收起后仍保持折叠。 */
+  function reveal(folderPath) {if(typeof folderPath==='string' && folderPath)closedFolders.delete(folderPath);}
+  const toggleFromButton=()=>setCollapsed(!document.querySelector('.workspace-shell')?.classList.contains('sidebar-collapsed'),true);
+  $('sidebar-toggle').addEventListener('click',toggleFromButton);
+  $('sidebar-reopen').addEventListener('click',toggleFromButton);
   function initSidebarResize() {
     const shell=document.querySelector('.workspace-shell'),pane=$('workbench-sidebar'),handle=$('sidebar-resizer');
     if(!shell || !pane || !handle) return;
@@ -285,5 +304,5 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     window.addEventListener('resize',()=>{if(custom())apply(paneWidth());});
   }
   initSidebarResize();
-  return {renderFiles,renderOutline};
+  return {renderFiles,renderOutline,show:showSidebar,reveal,scrollToCurrent};
 }

@@ -42,6 +42,8 @@ export function attachFloatingStats(options) {
   document.addEventListener('workbench:stats-layout',()=>{
     if(panel.hidden)return;
     const bounds=panel.getBoundingClientRect();
+    // 书架等页面会用 CSS 暂时隐藏悬浮窗，此时不要把它钉到左上角。
+    if(!bounds.width || !bounds.height)return;
     if(bounds.left<8 || bounds.top<8 || bounds.right>innerWidth-8 || bounds.bottom>innerHeight-8)position(bounds.left,bounds.top);
   });
   attachStatsPreferences(options);

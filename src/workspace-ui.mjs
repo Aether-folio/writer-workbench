@@ -1,6 +1,7 @@
 import {dayKey,splitDays,editCounts,aggregateDays} from './writing-records.mjs';
 import {formatTime} from './core.mjs';
 import {attachSidebar} from './sidebar.mjs';
+import {buildShelfItems,pickWorkDocument,pickLatestDocument,renderShelf as renderShelfView,shelfSummary} from './shelf.mjs';
 
 const $=id=>document.getElementById(id);
 const uid=()=>globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -13,6 +14,8 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   let settings={background:'#fffdf8'},fileList=[],newMode='blank',creating=false,historyMonth=dayKey().slice(0,7),selectedDay=dayKey(),historyGeneration=0,historyDays={};
   let added=0,seenActive=0,seenIdle=0,statsSaving=null,statsVersion=0,savedStatsVersion=0,lastFlush=Date.now();
   let directoryList=[],workList=[],worksReady=false,selectedFolder='',newFolder='',statsPreferencesReady=false,lastStatsContext=null;
+  let shelfCovers=new Map(),shelfCoversGeneration=0,shelfReady=false,draftInfo={title:'未命名草稿',body:''};
+  let workDialogMode='add',workRenameTarget='',shelfMenuTarget=null,shelfMenuAnchor=null,coverTarget='',shelfStatusTimer;
   const records=new Map();
   let pendingDelete=null,deleteGeneration=0,trashReady=false,trashBusy=false,pendingTrash=null;
   let finishStatus='';
@@ -33,7 +36,143 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     if(!fileList.some(file=>file.path.startsWith('文稿/')))directoryList=directoryList.filter(folder=>folder.path!=='文稿' && !folder.path.startsWith('文稿/'));
     trashReady=Boolean(info.features?.trash);worksReady=Boolean(info.features?.works);statsPreferencesReady=Boolean(info.features?.statsPreferences);
     if(!directoryList.some(item=>item.path===selectedFolder))selectedFolder=workList.length ? workList[0].path+'/正文' : directoryList[0]?.path || '';
+    if(info.draft) draftInfo=info.draft;
+    shelfReady=true;
     renderFiles();
+    renderShelf();
+    if(!$('shelf-page').hidden)loadCovers().catch(()=>{});
+  }
+  function renderShelf() {
+    const items=buildShelfItems({works:workList,files:fileList,covers:shelfCovers,draft:draftInfo});
+    renderShelfView($('shelf-grid'),{items,ready:shelfReady,canCreate:worksReady,onCreate:openWorkDialog,onOpen:openShelfItem,onContextMenu:openShelfMenu});
+    $('shelf-subtitle').textContent=shelfReady ? shelfSummary(items) : '正在整理书架…';
+  }
+  function shelfStatus(message,tone='info') {
+    const status=$('shelf-status');
+    if(!status)return;
+    status.textContent=message;
+    if(tone==='error')status.dataset.tone='error';else delete status.dataset.tone;
+    clearTimeout(shelfStatusTimer);
+    if(message)shelfStatusTimer=setTimeout(()=>{status.textContent='';delete status.dataset.tone;},3200);
+  }
+  function closeShelfMenu(restoreFocus=false) {
+    const menu=$('shelf-menu'),anchor=shelfMenuAnchor;
+    if(menu && !menu.hidden)menu.hidden=true;
+    shelfMenuTarget=null;shelfMenuAnchor=null;
+    if(restoreFocus && anchor?.isConnected)anchor.focus({preventScroll:true});
+  }
+  function openShelfMenu(item,anchor,event) {
+    const menu=$('shelf-menu');
+    if(!menu || item.kind!=='work')return;
+    closeShelfMenu();
+    shelfMenuTarget=item;shelfMenuAnchor=anchor;
+    for(const button of menu.querySelectorAll('button[data-action]')) {
+      if(button.dataset.action==='remove-cover')button.hidden=!shelfCovers.get(item.path);
+    }
+    menu.hidden=false;menu.style.left='0px';menu.style.top='0px';
+    const bounds=menu.getBoundingClientRect(),rect=anchor.getBoundingClientRect();
+    const x=event.clientX || rect.left+24,y=event.clientY || rect.top+24;
+    menu.style.left=Math.max(8,Math.min(x,innerWidth-bounds.width-8))+'px';
+    menu.style.top=Math.max(8,Math.min(y,innerHeight-bounds.height-8))+'px';
+    menu.querySelector('button:not([hidden])')?.focus({preventScroll:true});
+  }
+  async function saveWorkCover(workPath,coverDataUrl) {
+    const preferences=await callTool('stats_preferences',{workPath});
+    const args={fields:preferences.fields,workPath,coverDataUrl};
+    if(preferences.pet)args.pet=preferences.pet;
+    await callTool('save_stats_preferences',args);
+    const next=coverDataUrl ? String(coverDataUrl) : '';
+    shelfCovers.set(workPath,next);
+    document.dispatchEvent(new CustomEvent('workbench:coverchange',{detail:{workPath,coverDataUrl:next}}));
+    renderShelf();
+  }
+  function requestCoverChange(workPath) {
+    coverTarget=workPath;
+    const input=$('shelf-cover-file');
+    input.value='';input.click();
+  }
+  async function removeWorkCover(workPath) {
+    try {await saveWorkCover(workPath,null);shelfStatus('封面已移除。');}
+    catch(error) {shelfStatus('封面未移除：'+error.message,'error');}
+  }
+  async function handleShelfCoverFile(file) {
+    const workPath=coverTarget;coverTarget='';
+    if(!file || !workPath)return;
+    if(!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size>2097152) {
+      shelfStatus('请选择 2 MB 以内的 PNG、JPG 或 WebP 图片。','error');return;
+    }
+    shelfStatus('正在保存封面…');
+    try {
+      const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error('图片读取失败'));reader.readAsDataURL(file);});
+      const image=new Image();image.src=data;await image.decode();
+      await saveWorkCover(workPath,data);
+      shelfStatus('封面已更新。');
+    } catch(error) {shelfStatus('封面未保存：'+error.message,'error');}
+  }
+  async function loadCovers() {
+    if(!worksReady) return;
+    const missing=workList.filter(work=>!shelfCovers.has(work.path));
+    if(!missing.length) return;
+    const generation=++shelfCoversGeneration;
+    await Promise.all(missing.map(async work=>{
+      try {
+        const result=await callTool('stats_preferences',{workPath:work.path});
+        shelfCovers.set(work.path,String(result?.coverDataUrl || ''));
+      } catch {shelfCovers.set(work.path,'');}
+    }));
+    if(generation===shelfCoversGeneration && !$('shelf-page').hidden) renderShelf();
+  }
+  async function openShelfItem(item) {
+    if(creating) return;
+    if(item.kind==='draft') {
+      creating=true;editor.readOnly=true;
+      try {
+        clearTimeout(saveTimeout);pauseClock();await flushDocument();await flushRecords();
+        const info=await refreshFiles();
+        sidebar.show();loadDocument(info?.draft || draftInfo);showEditor();
+      } catch(error) {notify(error.message);}
+      finally {creating=false;editor.readOnly=false;}
+      return;
+    }
+    if(item.kind==='loose') {
+      const loose=fileList.filter(file=>!workList.some(work=>file.path.startsWith(work.path+'/')));
+      const target=pickLatestDocument(loose);
+      if(!target) {notify('这篇文稿似乎已被移动，正在刷新书架。');await refreshFiles().catch(()=>{});return;}
+      selectedFolder=target.path.includes('/') ? target.path.slice(0,target.path.lastIndexOf('/')) : '文稿';
+      sidebar.show();
+      await openDocument(target.path);
+      return;
+    }
+    await openWork(item.path);
+  }
+  async function openWork(workPath) {
+    const work=workList.find(item=>item.path===workPath);
+    if(!work) {notify('没有找到这个作品，可能已被移动或删除。');await refreshFiles().catch(()=>{});return;}
+    if(creating) return;
+    selectedFolder=work.path+'/正文';
+    sidebar.show();sidebar.reveal(work.path);
+    // 刚从这个作品回到书架时，优先回到原来那篇；否则打开正文里最近更新的一篇。
+    const current=path && path.startsWith(work.path+'/') ? fileList.find(file=>file.path===path) : null;
+    const target=current || pickWorkDocument(fileList,work.path);
+    if(target) {await openDocument(target.path);return;}
+    notify(`《${work.name.replace(/^《(.*)》$/,'$1')}》还没有文稿，先建第一篇吧。`);
+    openNameDialog('blank',selectedFolder);
+  }
+  function showShelf() {
+    pauseClock();
+    $('shelf-page').hidden=false;$('editor-page').hidden=true;$('history-page').hidden=true;
+    document.body.classList.add('is-shelf');
+    document.querySelector('.workspace-shell')?.classList.add('shelf-mode');
+    $('shelf-home').setAttribute('aria-pressed','true');
+    $('nav-editor').setAttribute('aria-pressed','false');
+    $('nav-history').setAttribute('aria-pressed','false');
+    renderShelf();
+    onLoaded();
+    $('shelf-title').focus({preventScroll:true});
+    // 先落盘再刷新：书架上的文稿数、最近更新和草稿都来自磁盘。
+    flushDocument().catch(()=>{}).then(()=>refreshFiles()).catch(()=>{});
+    flushRecords().catch(()=>{});
+    loadCovers().catch(()=>{});
   }
   function recordFor(day) {
     const key=`${day}|${path}`;
@@ -229,6 +368,8 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         if(dirty || documentSaving) await flushDocument();
       }
       const result=await callTool('rename_folder',{path:folderPath,name});
+      // 作品封面按目录名保存：顶层作品改名后清掉旧键，重新按新路径读取。
+      if(!folderPath.includes('/')) shelfCovers.clear();
       await refreshFiles();
       const nextPath=result.folder.path;
       if(inside) {
@@ -263,7 +404,22 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     } catch(error) {notify(error.message);}
     finally {creating=false;editor.readOnly=false;}
   }
-  function showEditor() {$('editor-page').hidden=false;$('history-page').hidden=true;$('nav-editor').setAttribute('aria-pressed','true');$('nav-history').setAttribute('aria-pressed','false');}
+  function showEditor() {
+    $('shelf-page').hidden=true;$('editor-page').hidden=false;$('history-page').hidden=true;
+    document.body.classList.remove('is-shelf');
+    document.querySelector('.workspace-shell')?.classList.remove('shelf-mode');
+    $('shelf-home').setAttribute('aria-pressed','false');
+    $('nav-editor').setAttribute('aria-pressed','true');$('nav-history').setAttribute('aria-pressed','false');
+    sidebar.scrollToCurrent();
+  }
+  function showHistory() {
+    $('shelf-page').hidden=true;$('editor-page').hidden=true;$('history-page').hidden=false;
+    document.body.classList.remove('is-shelf');
+    document.querySelector('.workspace-shell')?.classList.remove('shelf-mode');
+    $('shelf-home').setAttribute('aria-pressed','false');
+    $('nav-editor').setAttribute('aria-pressed','false');$('nav-history').setAttribute('aria-pressed','true');
+    loadHistory();
+  }
   function openNameDialog(mode,folder) {
     if(creating)return;
     if(!directoryList.length){notify('请先添加作品，再保存文稿。');openWorkDialog();return;}
@@ -295,20 +451,53 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     } catch(error) {$('document-error').textContent=error.message;}
     finally {creating=false;$('document-create').disabled=false;editor.readOnly=false;}
   }
+  function resetWorkDialogTexts(mode) {
+    $('work-heading').textContent=mode==='rename'?'重命名作品':'添加作品';
+    $('work-hint').textContent=mode==='rename'
+      ? '只改作品文件夹名，里面的“设定”“正文”“草稿”和文稿都不动。'
+      : '以作品名创建文件夹，并自动建立“设定”、“正文”和“草稿”三个子文件夹。大纲、人物设定等放在“设定”中。';
+    $('work-create').textContent=mode==='rename'?'保存名称':'添加作品';
+  }
   function openWorkDialog() {
     if(creating)return;
+    workDialogMode='add';workRenameTarget='';
+    resetWorkDialogTexts('add');
     $('work-name').value='';$('work-error').textContent=worksReady?'':'添加作品功能已安装，请重启 Codex 后使用。';
     $('work-create').disabled=!worksReady;$('work-dialog').showModal();$('work-name').focus();
   }
+  function openWorkRenameDialog(workPath) {
+    if(creating)return;
+    const work=workList.find(item=>item.path===workPath);
+    if(!work){notify('没有找到这个作品，可能已被移动或删除。');return;}
+    workDialogMode='rename';workRenameTarget=work.path;
+    resetWorkDialogTexts('rename');
+    $('work-name').value=work.name;$('work-error').textContent='';
+    $('work-create').disabled=false;$('work-dialog').showModal();
+    $('work-name').focus();$('work-name').select();
+  }
   async function createWork() {
-    if(creating || !worksReady)return;
+    if(creating)return;
     const name=$('work-name').value.trim();
     if(!name || /[\\/]/.test(name)){$('work-error').textContent='请填写作品名，不要包含路径。';return;}
+    if(workDialogMode==='rename') {
+      $('work-create').disabled=true;$('work-cancel').disabled=true;$('work-error').textContent='';
+      try {
+        await renameFolder(workRenameTarget,name);
+        $('work-dialog').close();
+        shelfStatus(`作品已改名为《${name.replace(/^《(.*)》$/,'$1')}》。`);
+      } catch(error){$('work-error').textContent=error.message;}
+      finally {$('work-create').disabled=false;$('work-cancel').disabled=false;}
+      return;
+    }
+    if(!worksReady)return;
     creating=true;$('work-create').disabled=true;$('work-cancel').disabled=true;$('work-error').textContent='';
     try {
       const result=await callTool('create_work',{name});
+      const onShelf=!$('shelf-page').hidden;
       await refreshFiles();selectedFolder=result.work.path+'/正文';updateStatsWork();$('work-dialog').close();
-      notify(`已添加作品《${result.work.name.replace(/^《(.*)》$/,'$1')}》，可在“设定”、“正文”或“草稿”旁点击 ＋ 新建文稿。`);
+      notify(onShelf
+        ? `已添加作品《${result.work.name.replace(/^《(.*)》$/,'$1')}》，点击书架封面开始写作。`
+        : `已添加作品《${result.work.name.replace(/^《(.*)》$/,'$1')}》，可在“设定”、“正文”或“草稿”旁点击 ＋ 新建文稿。`);
     } catch(error){$('work-error').textContent=error.message;}
     finally {creating=false;$('work-create').disabled=false;$('work-cancel').disabled=false;}
   }
@@ -413,9 +602,45 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     else if(event.key==='Escape' && path){event.preventDefault();title.value=titleSnapshot;title.blur();}
   });
   title.addEventListener('blur',()=>commitTitleRename());
+  $('shelf-home').addEventListener('click',showShelf);
   $('nav-editor').addEventListener('click',showEditor);
   $('history-close').addEventListener('click',()=>{showEditor();editor.focus({preventScroll:true});});
-  $('nav-history').addEventListener('click',()=>{pauseClock();onLoaded();$('editor-page').hidden=true;$('history-page').hidden=false;$('nav-editor').setAttribute('aria-pressed','false');$('nav-history').setAttribute('aria-pressed','true');loadHistory();});
+  $('nav-history').addEventListener('click',()=>{pauseClock();onLoaded();showHistory();});
+  const shelfMenu=$('shelf-menu');
+  shelfMenu.addEventListener('click',event=>{
+    const button=event.target.closest('button[data-action]');
+    if(!button || !shelfMenuTarget)return;
+    const item=shelfMenuTarget,action=button.dataset.action;
+    closeShelfMenu();
+    if(action==='open')void openShelfItem(item);
+    else if(action==='rename')openWorkRenameDialog(item.path);
+    else if(action==='cover')requestCoverChange(item.path);
+    else if(action==='remove-cover')void removeWorkCover(item.path);
+  });
+  shelfMenu.addEventListener('keydown',event=>{
+    if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+    event.preventDefault();
+    const items=[...shelfMenu.querySelectorAll('button[data-action]:not([hidden])')];
+    if(!items.length)return;
+    const index=items.indexOf(document.activeElement);
+    const next=event.key==='ArrowDown'?(index+1)%items.length:event.key==='ArrowUp'?(index-1+items.length)%items.length:event.key==='Home'?0:items.length-1;
+    items[next]?.focus();
+  });
+  document.addEventListener('pointerdown',event=>{if(!shelfMenu.hidden && !shelfMenu.contains(event.target))closeShelfMenu();},true);
+  document.addEventListener('scroll',()=>{if(!shelfMenu.hidden)closeShelfMenu();},true);
+  window.addEventListener('resize',()=>{if(!shelfMenu.hidden)closeShelfMenu();});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape' && !shelfMenu.hidden)closeShelfMenu(true);});
+  $('shelf-cover-file').addEventListener('change',event=>{
+    const file=event.target.files?.[0];
+    event.target.value='';
+    void handleShelfCoverFile(file);
+  });
+  document.addEventListener('workbench:coverchange',event=>{
+    const workPath=event.detail?.workPath;
+    if(!workPath) return;
+    shelfCovers.set(workPath,String(event.detail.coverDataUrl || ''));
+    if(!$('shelf-page').hidden) renderShelf();
+  });
   for(const [id,direction] of [['month-previous',-1],['month-next',1]]) $(id).addEventListener('click',()=>{const [year,month]=historyMonth.split('-').map(Number);historyMonth=new Date(Date.UTC(year,month-1+direction,1)).toISOString().slice(0,7);loadHistory();});
   $('history-today').addEventListener('click',()=>{historyMonth=dayKey().slice(0,7);selectedDay=dayKey();loadHistory();});
   document.addEventListener('keydown',event=>{
@@ -436,7 +661,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         const info=await callTool('workspace_info',{});connected=true;acceptWorkspaceInfo(info);settings=info.settings;applyAppearance();
         // Never replace text typed while the initial disk request was in flight.
         if(!dirty && !editor.value) loadDocument(info.draft);else {renderFiles();if(dirty)await flushDocument();}
-      } catch(error) {$('files-status').textContent='本地文件连接未完成';$('document-status').textContent='尚未保存';notify(error.message);}
+      } catch(error) {$('files-status').textContent='本地文件连接未完成';$('document-status').textContent='尚未保存';$('shelf-subtitle').textContent='书架读取未完成，请检查本地文件服务。';notify(error.message);}
     },
   };
 }

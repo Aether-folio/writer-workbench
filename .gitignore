@@ -30,3 +30,7 @@ output/
 Thumbs.db
 .idea/
 .vscode/
+
+# Local recordings and promotional work may contain personal manuscripts.
+video/
+**/video/

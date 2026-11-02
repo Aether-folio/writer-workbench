@@ -135,6 +135,9 @@ async function fixture(browser,messageEnabled,displayOptions={}) {
     console.error(JSON.stringify({errors,requests:await page.evaluate(()=>window.testRequests),status:await frame.locator('#host-status').textContent(),feedback:await frame.locator('#feedback').textContent()}));
     throw error;
   }
+  // 工作台现在从书架进入；编辑器相关用例统一先切到「写作」页。
+  await frame.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
+  await frame.locator('#editor-page').waitFor({state:'visible'});
   return {page,frame,errors};
 }
 
@@ -229,6 +232,8 @@ if(require.main===module) (async()=>{
     assert.ok((await frame.locator('#annotation-list').textContent()).includes('添加过程中修改的新版本'));
     await page.locator('#app').evaluate(el=>{el.srcdoc=el.srcdoc;});
     await frame.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();
+    await frame.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
+    await frame.locator('#editor-page').waitFor({state:'visible'});
     assert.equal(await frame.locator('.annotation-card').count(),0);
     assert.equal(await frame.locator('#annotations-to-chat').isDisabled(),true);
     await editor.fill(original);
@@ -305,6 +310,9 @@ if(require.main===module) (async()=>{
     await frame.locator('#appearance-status').filter({hasText:'背景已保存'}).waitFor();
     await frame.locator('#appearance-close').click();
     await page.locator('#app').evaluate(el=>{el.srcdoc=el.srcdoc;});
+    await frame.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();
+    await frame.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
+    await frame.locator('#editor-page').waitFor({state:'visible'});
     await frame.locator('.file-entry').filter({hasText:'新章节.md'}).waitFor();
     assert.equal(await editor.evaluate(()=>document.documentElement.style.getPropertyValue('--paper')),'#eadfcb');
     assert.equal(await frame.locator('.annotation-card').count(),0);
@@ -407,14 +415,22 @@ if(require.main===module) (async()=>{
     await wf.locator('#document-name').fill('人物设定.md');await wf.locator('#document-create').click();
     await wf.locator('#document-status').filter({hasText:'示例长篇/设定/人物设定.md'}).waitFor();
     assert.equal(await wp.evaluate(()=>window.testFiles['示例长篇/正文/第一章.md'].body),'用于界面检查的章节文字。');
-    await wf.locator('#stats-settings').click();
     const png=await wp.evaluate(()=>{
       const canvas=document.createElement('canvas');canvas.width=300;canvas.height=400;const ctx=canvas.getContext('2d');
       const gradient=ctx.createLinearGradient(0,0,300,400);gradient.addColorStop(0,'#3c6174');gradient.addColorStop(1,'#1c3547');ctx.fillStyle=gradient;ctx.fillRect(0,0,300,400);
       ctx.strokeStyle='#afc6bc';ctx.strokeRect(24,24,252,352);ctx.fillStyle='#eff1d9';ctx.font='18px serif';ctx.fillText('创作手记',50,70);ctx.font='bold 34px serif';ctx.fillText('示例作品',50,165);ctx.fillText('示例',50,215);ctx.fillRect(50,300,35,2);return canvas.toDataURL('image/png');
     });
-    await wf.locator('#stats-cover-file').setInputFiles({name:'测试封面.png',mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')});
-    await wf.locator('#stats-cover-preview-image').waitFor({state:'visible'});
+    // 封面改在书架上右键更换
+    await wf.locator('#shelf-home').click();
+    await wf.locator('#shelf-page').waitFor({state:'visible'});
+    await wf.locator('.shelf-book[data-path="示例长篇"]').click({button:'right'});
+    await wf.locator('#shelf-menu button[data-action="cover"]').click();
+    await wf.locator('#shelf-cover-file').setInputFiles({name:'测试封面.png',mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')});
+    await wf.locator('#shelf-status').filter({hasText:'封面已更新'}).waitFor();
+    await wf.locator('.shelf-book[data-path="示例长篇"]').click();
+    await wf.locator('#editor-page').waitFor({state:'visible'});
+    assert.equal(await wf.locator('#stats-cover-image').getAttribute('src'),png);
+    await wf.locator('#stats-settings').click();
     for(const field of ['speed','active','idle','status'])await wf.locator(`[data-stats-option="${field}"]`).uncheck();
     await wf.locator('#stats-settings-save').click();await wf.locator('#stats-settings-dialog').waitFor({state:'hidden'});
     assert.equal(await wf.locator('#stats-float').getAttribute('data-metrics'),'1');
@@ -424,7 +440,7 @@ if(require.main===module) (async()=>{
     await wf.locator('#stats-settings-save').click();await wf.locator('#stats-settings-dialog').waitFor({state:'hidden'});
     assert.equal(await wf.locator('#stats-grid').isVisible(),false);
     await wf.locator('#stats-float').screenshot({path:resolve(output,'stats-cover-only.png')});
-    await wf.locator('#stats-settings').click();await wf.locator('#stats-cover-remove').click();await wf.locator('[data-stats-option="words"]').check();
+    await wf.locator('#stats-settings').click();await wf.locator('[data-stats-option="words"]').check();
     await wf.locator('#stats-settings-cancel').click();
     assert.equal(await wf.locator('#stats-cover-image').isVisible(),true);
     assert.equal(await wf.locator('#stats-grid').isVisible(),false);
@@ -466,7 +482,7 @@ if(require.main===module) (async()=>{
     assert.equal(await wf.locator('#sidebar-reopen').isVisible(),true);
     assert.equal(await wf.locator('#stats-float').isVisible(),true);
     await wf.locator('#sidebar-reopen').click();
-    assert.equal(await wf.locator('.header-tools #stats-toggle').isVisible(),true);
+    assert.equal(await wf.locator('#stats-toggle').isVisible(),true);
     assert.equal(await wf.locator('#sidebar-reopen').isVisible(),false);
     await wf.locator('#stats-settings').click();await wp.screenshot({path:resolve(output,'stats-settings.png'),fullPage:true});
     await wf.locator('#stats-settings-cancel').click();
@@ -634,6 +650,8 @@ if(require.main===module) (async()=>{
     await settings();await petSwitch.uncheck();assert.equal(await petChoice.isDisabled(),true);await saveSettings();
     assert.equal(await petStage.isVisible(),false);assert.equal(await petImage.getAttribute('src'),null);
     await pp.locator('#app').evaluate(frame=>{frame.srcdoc=frame.srcdoc;});await petReady();
+    await pf.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
+    await pf.locator('#editor-page').waitFor({state:'visible'});
     await settings();assert.equal(await petSwitch.isChecked(),false);assert.equal(await petChoice.inputValue(),'fish');
     await petSwitch.check();await saveSettings();assert.equal(await petImage.getAttribute('src'),fishRest);
     await pp.evaluate(()=>{window.testPetSaveError=true;});
@@ -652,6 +670,9 @@ if(require.main===module) (async()=>{
     assert.ok(await pf.locator('#stats-float').evaluate(panel=>panel.scrollWidth<=panel.clientWidth));
     await pp.evaluate(()=>{window.testLegacyPets=true;});
     await pp.locator('#app').evaluate(frame=>{frame.srcdoc=frame.srcdoc;});
+    await pf.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();
+    await pf.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
+    await pf.locator('#editor-page').waitFor({state:'visible'});
     await pf.locator('#stats-settings:not([disabled])').waitFor();await settings();
     await pf.locator('#stats-pet-note').filter({hasText:'重启 Codex'}).waitFor();
     assert.equal(await petSwitch.isDisabled(),true);assert.equal(await petStage.isVisible(),false);
