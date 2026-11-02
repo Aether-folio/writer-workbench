@@ -37,7 +37,7 @@ export function createWorkspace(workspacePath) {
   }
   async function init() {
     await checked('');await mkdir(root,{recursive:true});
-    for(const folder of ['文稿','数据','数据/备份']) {await mkdir(await checked(folder),{recursive:true});}
+    for(const folder of ['数据','数据/备份']) {await mkdir(await checked(folder),{recursive:true});}
   }
   async function readJSON(name,fallback) {
     try {return JSON.parse(await readFile(await checked(`数据/${name}.json`),'utf8'));}

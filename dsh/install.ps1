@@ -3,7 +3,7 @@
 param([string]$Profile='desktop',[string]$Workspace,[string]$DshCmd,[switch]$SkipSkill)
 $ErrorActionPreference='Stop'
 if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'lib/index.js'))) { throw '请先在仓库根目录运行 npm ci 和 npm run build。' }
-if (-not $Workspace) { $Workspace = if($env:WORKBENCH_WORKSPACE){$env:WORKBENCH_WORKSPACE}else{Join-Path $env:USERPROFILE '.writer-workbench'} }
+if (-not $Workspace) { $Workspace = if($env:WORKBENCH_WORKSPACE){$env:WORKBENCH_WORKSPACE}else{Join-Path $PSScriptRoot '..'} }
 $dataRoot=[System.IO.Path]::GetFullPath($Workspace)
 if (-not $DshCmd) { $found=Get-Command dsh -ErrorAction SilentlyContinue;if(-not $found){throw '找不到 dsh，请通过 -DshCmd 指定命令路径。'};$DshCmd=$found.Source }
 & $DshCmd plugin --profile $Profile add $PSScriptRoot

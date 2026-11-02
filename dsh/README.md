@@ -10,7 +10,7 @@
 .\dsh\install.ps1 -Profile desktop
 ```
 
-脚本使用 PATH 上的 `dsh` 命令；可通过 `-DshCmd` 指定。默认数据根目录是用户目录的 `.writer-workbench`，可用 `-Workspace` 覆盖。不会自动导入已有小说目录。
+脚本使用 PATH 上的 `dsh` 命令；可通过 `-DshCmd` 指定。默认工作区为本插件项目目录（`dsh/` 的上一级），数据写入 `<插件项目目录>/码字工作台/`。`WORKBENCH_WORKSPACE` 环境变量可覆盖默认值，`-Workspace` 参数或宿主 `config.workspace` 可显式指定目录。默认路径不依赖启动时的当前目录。不会自动导入已有小说目录。
 
 脚本将本包链接到指定 profile，在 `dsh.profile.bundles` 中登记，并安装配套技能。若 profile 已有工作台配置，保留原配置，需自行核对 workspace。安装后完全退出并重启 DSH。
 
@@ -23,7 +23,7 @@
     workspace: '/path/to/writing-data'
 ```
 
-默认与 Codex 共用数据目录；自定义时两边配置成相同目录。编辑同一文稿时建议只使用一个客户端。
+Codex 默认使用用户目录的 `.writer-workbench/`。如需共用 DSH 数据，在构建后运行 `node scripts/configure-local.mjs /path/to/writer-workbench`，或将两边的 `WORKBENCH_WORKSPACE` 配置成相同目录。编辑同一文稿时建议只使用一个客户端。
 
 ## 维护与测试
 

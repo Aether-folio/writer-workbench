@@ -65,7 +65,9 @@ npm run build
 
 ## 数据位置与隐私
 
-默认数据在用户目录的 `.writer-workbench/码字工作台/`。设置 `WORKBENCH_WORKSPACE` 可覆盖数据根目录；DSH 也支持 `config.workspace`。两边指定相同目录即可共用数据，编辑同一文稿时建议只使用一个客户端。
+DSH 默认将数据放在插件项目目录下的 `码字工作台/`（`dsh/` 的上一级），不依赖启动时的当前目录。Codex 默认数据仍在用户目录的 `.writer-workbench/码字工作台/`；可运行 `node scripts/configure-local.mjs /path/to/writer-workbench` 让本机 Codex 使用同一插件项目目录。设置 `WORKBENCH_WORKSPACE` 可覆盖工作区目录；DSH 也支持 `config.workspace` 和安装参数 `-Workspace`，最终数据均写入 `<workspace>/码字工作台/`。已有 DSH profile 配置会保留，需核对其中的 `workspace`。两边指定相同目录即可共用数据，编辑同一文稿时建议只使用一个客户端。
+
+每部作品使用自己的 `正文/`、`设定/`、`草稿/`。工作台不再预建空的顶层 `文稿/`；已有目录及其中的文件仍可正常读取，不会自动删除。
 
 文稿、自动备份、回收站、封面和每日码字记录都保存在本机。批注仅在当前工作台页面内存中，关闭或刷新后清空；成功添加到聊天草稿后移除对应记录。加入聊天的内容将由所用客户端及其服务处理，请自行决定添加哪些文字。
 

@@ -75,6 +75,7 @@ test('文稿操作拒绝越界、数据文件和链接目录',()=>fixture(async(
     await assert.rejects(store.saveDocument({path,body:'不应写入'}));
   }
   await mkdir(join(directory,'outside'));
+  await mkdir(join(store.root,'文稿'),{recursive:true});
   await symlink(join(directory,'outside'),join(store.root,'文稿','链接'),'junction');
   await assert.rejects(store.saveDocument({path:'文稿/链接/越界.md',body:'不应写入'}));
   assert.deepEqual(await readdir(join(directory,'outside')),[]);

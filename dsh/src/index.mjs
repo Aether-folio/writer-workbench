@@ -10,7 +10,6 @@
  */
 import {existsSync, readFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
-import {homedir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {createWorkbenchRuntime, STORAGE_FOLDER} from './runtime.mjs';
 import {tool} from './tool.mjs';
@@ -34,7 +33,7 @@ export const VERSION = readVersion();
 export function apply(ctx, config = {}) {
   const workspacePath = typeof config?.workspace === 'string' && config.workspace.trim() !== ''
     ? resolve(config.workspace)
-    : resolve(process.env.WORKBENCH_WORKSPACE || join(homedir(),'.writer-workbench'));
+    : resolve(process.env.WORKBENCH_WORKSPACE || join(PACKAGE_ROOT, '..'));
   const editorPath = typeof config?.editorFile === 'string' && config.editorFile.trim() !== ''
     ? resolve(PACKAGE_ROOT, config.editorFile)
     : join(PACKAGE_ROOT, 'assets', 'editor.html');
