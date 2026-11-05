@@ -10,7 +10,7 @@
  *     → 界面渲染 + 聊天草稿写入
  *
  * 运行：
- *   electron tests/e2e/main.cjs
+ *   "C:\Users\<你>\.dsh\electron\electron.exe" tests/e2e/main.cjs
  */
 const {app, BrowserWindow} = require('electron');
 const http = require('node:http');

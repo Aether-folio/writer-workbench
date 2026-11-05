@@ -1,36 +1,165 @@
-# DeepSeek Harness 适配层
+# 码字工作台 · DeepSeek Harness 适配层
 
-复用根目录的界面和数据逻辑，在 DSH 右侧栏打开工作台。选区与批注加入当前聊天草稿，不自动发送。
+这是原 Codex 插件 `writer-workbench` 的 DSH 适配层。**它不复制、不改写 Codex 版**：
+`.codex-plugin/`、`.mcp.json`、`dist/server.mjs`、`skills/` 和原 `package.json` 都保持原样，
+Codex 仍然按原来的方式加载。
+
+适配层做三件事：
+
+1. **复用原界面**：把 Codex 版打包好的 `dist/editor.html`（一个标准 MCP App）放进
+   `assets/editor.html`，由 DSH 页面内嵌 iframe 加载，不重写编辑器。
+2. **补一个 MCP Apps 宿主**：原界面通过 `postMessage` 发 `ui/initialize`、`tools/call`、
+   `ui/message`；`src/bridge.mjs` 在 DSH 页面里扮演这个宿主，把工具调用转到同源 HTTP
+   接口，把选区要求和批注直接发送到当前 DSH 会话。
+3. **接回原本地数据**：`src/runtime.mjs` 直接复用 Codex 版的 `src/workspace.mjs`，
+   仍然读写 app 目录下的 `码字工作台/`。**数据无需迁移，两边可以交替使用**。
+
+## 目录
+
+```text
+apps/writer-workbench/
+├─ .codex-plugin/ .mcp.json dist/ src/ skills/ ...   # Codex 版，原样保留
+└─ dsh/                                              # 本适配层（一个独立 DSH 插件包）
+   ├─ package.json          # dsh.bundle.patch / dsh.client
+   ├─ cordis.patch.yml      # 挂载行 + workspace 配置
+   ├─ src/index.mjs         # 宿主半侧：路由 + open_workbench / workbench_status
+   ├─ src/runtime.mjs       # 可单测的 HTTP API / 打开计数
+   ├─ src/bridge.mjs        # MCP Apps 宿主桥（纯函数）
+   ├─ src/client.mjs        # 浏览器半侧：输入框入口 + 右侧栏标签页 + iframe
+   ├─ lib/                  # 构建产物
+   ├─ assets/editor.html    # 从 ../dist/editor.html 同步
+   └─ skills/writing-workbench/SKILL.md
+```
 
 ## 安装
 
-在仓库根目录先运行 `npm ci`、`npm run build`，再运行：
+推荐直接运行安装脚本（会自动构建、安装、确认 bundle、写入 workspace、安装技能）：
 
 ```powershell
-.\dsh\install.ps1 -Profile desktop
+cd "D:\AI-Workspace\apps\writer-workbench\dsh"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-脚本使用 PATH 上的 `dsh` 命令；可通过 `-DshCmd` 指定。默认工作区为本插件项目目录（`dsh/` 的上一级），数据写入 `<插件项目目录>/码字工作台/`。`WORKBENCH_WORKSPACE` 环境变量可覆盖默认值，`-Workspace` 参数或宿主 `config.workspace` 可显式指定目录。默认路径不依赖启动时的当前目录。不会自动导入已有小说目录。
+默认安装到 `desktop` profile，workspace 默认为 `D:\AI-Workspace\apps\writer-workbench`，
+数据根是 `D:\AI-Workspace\apps\writer-workbench\码字工作台\`，与 Codex 共用。
+也可以显式指定：
 
-脚本将本包链接到指定 profile，在 `dsh.profile.bundles` 中登记，并安装配套技能。若 profile 已有工作台配置，保留原配置，需自行核对 workspace。安装后完全退出并重启 DSH。
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 `
+  -Profile desktop `
+  -Workspace "D:\AI-Workspace\creative"
+```
 
-也可手动执行 `dsh plugin --profile desktop add ./dsh`，并确保 profile 的 `dsh.profile.bundles` 含 `dsh-writer-workbench`。通过 profile 的 `cordis.patch.yml` 配置 workspace：
+手动安装（等价）：
+
+```powershell
+cd "D:\AI-Workspace\apps\writer-workbench\dsh"
+npm run build
+& "D:\agent\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "$PWD"
+```
+
+`dsh plugin add` 会自动把 `dsh-writer-workbench` 追加到 profile 的
+`dsh.profile.bundles`。如果没有，请手动在
+`C:\Users\<你>\.dsh\profiles\desktop\package.json` 的 `dsh.profile.bundles` 末尾加上
+`"dsh-writer-workbench"`。
+
+然后**完全退出并重启 DSH 桌面应用**（新插件包只在启动时组合，刷新页面不会加载新包）。
+
+> 之后只改界面（`assets/editor.html`）时，重新 `npm run build` 后刷新页面，或关掉工作台标签再打开，
+> 就会加载新界面；改了宿主代码（`src/index.mjs` / `src/runtime.mjs`）才需要再次完全重启。
+
+技能会装到 `%USERPROFILE%\.dsh\skills\writing-workbench`，让模型更容易主动打开工作台；
+不需要时删掉该目录即可。
+
+## 使用
+
+- 聊天输入框右侧有一个「✎ 码字」按钮，点一下会在 **DSH 原生右侧栏**打开「码字工作台」标签页，
+  不会遮住对话。标签页自带「关闭 ×」，右侧栏也可以随时收起；还可以点标签条上的「全屏」。
+- 工作台首页是「我的书架」：还没有作品时是一本空白的书，点击即可创建第一个作品；有作品后
+  每本书是一个作品，下方显示文稿数与最近更新，书架末尾的虚线框也可以添加作品。点击封面会
+  打开该作品「正文」里最近更新的文稿，并展开文稿侧栏；右键封面可以重命名作品、更改或移除封面。
+  顶部「书架」按钮可随时回到书架；未另存的草稿和没有归入作品的散篇文稿也会以书的形式留在书架上。
+- 在对话里说“打开码字工作台”，模型会调用 `open_workbench`；页面最多 1.5 秒内自动在右侧栏打开/聚焦该标签页。
+- 说“检查码字工作台接入”，模型会调用 `workbench_status`。
+- 工作台里选中正文 → 右键「添加到当前聊天」，在工作台弹窗填写要求后直接发送到当前 DSH 会话；
+  Enter 发送，Shift+Enter 换行。批注区「全部发送到聊天」也直接发送，无需到聊天窗二次确认。
+- 在文件树里右键文稿或文件夹 →「重命名」（也可以按 F2），可直接改名；正文上方的「第一章」标题同样可改，回车生效。
+  文件扩展名会自动保留，同名不会覆盖，重命名会同步文件树、当前文稿路径和作品封面。
+  「设定」「正文」「草稿」是作品的结构名，改名会先弹出确认，因为工作台靠这些名字识别作品。
+- 数据位置是 `<workspace>\码字工作台\`，默认固定使用当前配置路径：
+  `D:\AI-Workspace\apps\writer-workbench\码字工作台\`。与 Codex 版共用同一份数据。
+
+> 如果你之前看到的是“全屏盖住、退不出”的旧版本：那是 0.3.0-dsh.1 的客户端。
+> 先按 `Ctrl+R` 刷新页面；若仍是旧界面，完全关闭并重开 DSH。0.3.0-dsh.2 起改为右侧栏标签页。
+
+## 配置
+
+`cordis.patch.yml` 里的 `workspace` 是作品目录：
+
+```yaml
+- insert:
+    - id: writer-workbench
+      name: 'dsh-writer-workbench'
+      config: {}
+```
+
+省略 `workspace` 时，宿主依次采用 `WORKBENCH_WORKSPACE` 环境变量、`D:\AI-Workspace\apps\writer-workbench`，
+不依赖启动时的当前目录。需要自定义时，在 `config` 下设置 `workspace` 的绝对路径，然后重启 DSH。也可以不改插件包，在
+`~/.dsh/profiles/desktop/cordis.patch.yml` 里追加一条同 id 的覆盖行（profile 层优先）：
 
 ```yaml
 - id: writer-workbench
   name: dsh-writer-workbench
   config:
-    workspace: '/path/to/writing-data'
+    workspace: 'D:\新的作品目录'
 ```
 
-Codex 默认使用用户目录的 `.writer-workbench/`。如需共用 DSH 数据，在构建后运行 `node scripts/configure-local.mjs /path/to/writer-workbench`，或将两边的 `WORKBENCH_WORKSPACE` 配置成相同目录。编辑同一文稿时建议只使用一个客户端。
+## 验证
 
-## 维护与测试
+```powershell
+cd dsh
+npm test          # 18 个测试：workspace 往返、回收站、路径穿越、MCP Apps 桥、宿主工具、客户端注册
+```
 
-在根目录运行 `npm run build` 同时更新两边产物；`npm run test:dsh` 检查宿主桥与存储逻辑。不要只更新其中一边的 editor.html。
+另外两个真实浏览器冒烟脚本（需要 `~/.dsh/electron/electron.exe`）：
 
-`tests/e2e/main.cjs` 使用 Electron 和独立临时目录测试完整宿主桥。将该脚本交给可用的 Electron 可执行文件运行。真实客户端的打开、全屏、退出与聊天草稿入口，请在独立测试 profile 中手动验收。不要将带凭据的测试 URL 写入文件或提交日志。
+```powershell
+# 1) 只测 editor.html + MCP Apps 桥，不启动 DSH
+$env:ELECTRON_RUN_AS_NODE=$null
+& "$env:USERPROFILE\.dsh\electron\electron.exe" tests\e2e\main.cjs
 
-DSH 原生全屏时编辑区会进入全屏写作；也可点文稿右上角“全屏”。保留退出按钮和 Esc 退出，悬浮窗保持原位置。
+# 2) 测真实 DSH Web UI：需要先启动一个带本插件的 profile
+#    dsh --profile wwtest --port 0 --no-open
+& "$env:USERPROFILE\.dsh\electron\electron.exe" tests\e2e\dsh-ui.cjs "http://127.0.0.1:<port>/?token=..."
+```
 
-工作台默认从“我的书架”进入；点击封面继续写作，右键管理作品名和封面。草稿与散篇也有单独入口。
+第 2 个脚本已验证：输入框右侧入口出现、工作台在右侧栏标签页打开、iframe 连上宿主、
+现有作品/章节渲染、原生「关闭」按钮可用、`open_workbench` 计数重新打开。选区流程现改为工作台对话弹窗；新版脚本验证弹窗与取消，直接发送由模拟宿主测试覆盖，不自动向真实聊天发送测试消息。
+
+## 与 Codex 共存
+
+- 适配层只新增 `dsh/` 目录，不改 Codex 的任何入口或产物。
+- 两边读写同一个 `码字工作台/`；不要同时打开两边的同一个文稿编辑（保存冲突保护会拒绝覆盖，
+  但最稳妥是同一时间只用一个客户端）。
+- 适配层的构建会从 `../dist/editor.html` 复制一份；Codex 版重新构建后，重跑
+  `npm run build` 即可同步界面。
+
+## 已知限制
+
+- 工作台在 DSH 右侧栏标签页里，宽度由右侧栏决定；可拖动分隔条或点标签条上的「全屏」放大。
+  窄宽度下工作台会自动把文件侧栏移到正文下方。
+- 直接发送需要活动会话提供原生发送接口；缺少接口时明确报错并保留内容。已有的聊天草稿及附件不会连带发送。
+- 批注仍只存在于当前工作台页面内存中；刷新/关闭后再打开会清空（与 Codex 版一致）。
+- 文件夹也能重命名，但「设定」「正文」「草稿」是结构名：改名后工作台可能不再把该目录识别为作品，需要时改回来即可。
+- 工作台需要页面在线才能打开；`open_workbench` 在没有页面连接时只登记请求。
+- DSH 的右侧栏会话识别依赖 `sidebarRight.mounted`；如果某个部署没有这个服务，且同时存在
+  多个会话，选区写入会提示“没有活动的会话”。
+
+## 卸载
+
+```powershell
+& "D:\agent\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop remove dsh-writer-workbench
+```
+
+再从 `dsh.profile.bundles` 删除对应项（`pnpm remove` 通常会自动处理），重启 DSH。
+`码字工作台/` 数据目录不会被删除。

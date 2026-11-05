@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {countWords,draftMessage,annotationBatchMessage,WritingClock} from '../src/core.mjs';
+import {countWords,draftMessage,quoteChatMessage,annotationBatchMessage,WritingClock} from '../src/core.mjs';
 
 test('正文计数排除标题、标点和空白，支持非BMP汉字',()=>{
   assert.equal(countWords('# 第一章 标题\n你好，世界！abc123\n𠮷'),11);
@@ -12,7 +12,19 @@ test('选区只追加到当前聊天草稿，保留多段文本，不触发发�
   assert.ok(message.content[0].text.includes('> 第一段。\n> \n> 第二段。'));
   assert.throws(()=>draftMessage(' \n'));
 });
-test('批注汇总按文稿分组，保留原文与批注全文，追加到当前草稿且不改原记录',()=>{
+test('选区与工作台填写的对话内容一起直接发送，保留原文快照',()=>{
+  const text='第一段。\n\n第二段。';
+  const message=quoteChatMessage(text,'  分析人物动机。\n给两条建议。  ','第一章','作品/正文/第一章.md');
+  assert.deepEqual(message._meta,{'openai/message':{target:'active',send:true}});
+  assert.ok(message.content[0].text.includes('文稿：作品/正文/第一章.md'));
+  assert.ok(message.content[0].text.includes('> 第一段。\n> \n> 第二段。'));
+  assert.ok(message.content[0].text.endsWith('分析人物动机。\n给两条建议。'));
+  assert.throws(()=>quoteChatMessage(text,'  '),/请填写/);
+  assert.throws(()=>quoteChatMessage(text,'字'.repeat(4001)),/过长/);
+  assert.throws(()=>quoteChatMessage('','分析'),/选中/);
+});
+
+test('批注汇总按文稿分组，保留原文与批注全文，直接发送且不改原记录',()=>{
   const records=[
     {title:'第二章',path:'作品/正文/第二章.md',quote:'原文甲\n\n下一段𠮷。',body:'修改因果。\n保留第二段。',updatedAt:'2026-11-02T01:00:00Z'},
     {title:'第一章',path:'作品/正文/第一章.md',quote:'原文乙',body:'补一个伏笔。',updatedAt:'2026-11-02T02:00:00Z'},
@@ -20,7 +32,7 @@ test('批注汇总按文稿分组，保留原文与批注全文，追加到当�
     {title:'临时灵感',quote:'草稿原文',body:'留待后续讨论。',updatedAt:'2026-11-02T00:00:00Z'},
   ];
   const original=structuredClone(records),message=annotationBatchMessage(records),text=message.content[0].text;
-  assert.deepEqual(message._meta,{'openai/message':{target:'active',send:false}});
+  assert.deepEqual(message._meta,{'openai/message':{target:'active',send:true}});
   assert.equal(message.role,'user');assert.equal(message.content.length,1);
   assert.ok(text.startsWith('\n\n【批注汇总 · 共 4 条】'));
   assert.equal(text.split('文稿：作品/正文/第二章.md').length-1,1);

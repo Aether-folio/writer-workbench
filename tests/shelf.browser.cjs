@@ -7,7 +7,7 @@
  * 点击封面打开对应侧栏与最近更新的正文；回到书架；空作品先建第一篇；
  * 新建作品后书架立即出现新书。
  */
-const {chromium} = require('playwright');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {readFileSync, mkdirSync} = require('node:fs');
 const {resolve} = require('node:path');
 
@@ -15,19 +15,19 @@ const html = readFileSync(resolve(__dirname, '../dist/editor.html'), 'utf8');
 const output = resolve(__dirname, '../test-results');
 mkdirSync(output, {recursive: true});
 
-const coverSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3c6174"/><stop offset="1" stop-color="#1c3547"/></linearGradient></defs><rect width="300" height="400" fill="url(#g)"/><rect x="22" y="22" width="256" height="356" fill="none" stroke="#afc6bc"/><text x="42" y="96" fill="#eff1d9" font-size="16" font-family="serif" letter-spacing="3">创作手记</text><text x="42" y="180" fill="#eff1d9" font-size="34" font-family="serif">示例作品</text><text x="42" y="224" fill="#eff1d9" font-size="34" font-family="serif">长篇</text><rect x="42" y="300" width="36" height="2" fill="#afc6bc"/></svg>`;
+const coverSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="400"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3c6174"/><stop offset="1" stop-color="#1c3547"/></linearGradient></defs><rect width="300" height="400" fill="url(#g)"/><rect x="22" y="22" width="256" height="356" fill="none" stroke="#afc6bc"/><text x="42" y="96" fill="#eff1d9" font-size="16" font-family="serif" letter-spacing="3">创作手记</text><text x="42" y="180" fill="#eff1d9" font-size="34" font-family="serif">我被好运</text><text x="42" y="224" fill="#eff1d9" font-size="34" font-family="serif">盯住了</text><rect x="42" y="300" width="36" height="2" fill="#afc6bc"/></svg>`;
 
 const seed = {
   cover: 'data:image/svg+xml;base64,' + Buffer.from(coverSvg).toString('base64'),
   works: [
-    {name: '示例作品', path: '示例作品'},
+    {name: '我被好运盯住了', path: '我被好运盯住了'},
     {name: '第二部作品', path: '第二部作品'},
     {name: '空作品', path: '空作品'},
   ],
   files: {
-    '示例作品/正文/第一章.md': {title: '第一章', body: '第一章正文。', revision: '1'.repeat(64), updatedAt: '2026-11-01T02:00:00.000Z'},
-    '示例作品/正文/第二章.md': {title: '第二章', body: '最近写的第二章。', revision: '2'.repeat(64), updatedAt: '2026-11-02T03:00:00.000Z'},
-    '示例作品/设定/人物设定.md': {title: '人物设定', body: '人物档案。', revision: '3'.repeat(64), updatedAt: '2026-10-30T02:00:00.000Z'},
+    '我被好运盯住了/正文/第一章.md': {title: '第一章', body: '第一章正文。', revision: '1'.repeat(64), updatedAt: '2026-11-01T02:00:00.000Z'},
+    '我被好运盯住了/正文/第二章.md': {title: '第二章', body: '最近写的第二章。', revision: '2'.repeat(64), updatedAt: '2026-11-02T03:00:00.000Z'},
+    '我被好运盯住了/设定/人物设定.md': {title: '人物设定', body: '人物档案。', revision: '3'.repeat(64), updatedAt: '2026-10-30T02:00:00.000Z'},
     '第二部作品/正文/开篇.md': {title: '开篇', body: '第二部的开篇。', revision: '4'.repeat(64), updatedAt: '2026-10-28T02:00:00.000Z'},
     '文稿/旧稿.md': {title: '旧稿', body: '以前直接放在文稿里的散篇。', revision: '5'.repeat(64), updatedAt: '2026-10-20T02:00:00.000Z'},
   },
@@ -145,7 +145,7 @@ async function fixture(browser, {works, files, cover, empty, background = '#fffd
 }
 
 async function main() {
-  const browser = await chromium.launch({...(process.env.PLAYWRIGHT_CHANNEL ? {channel:process.env.PLAYWRIGHT_CHANNEL} : {}),headless:true});
+  const browser = await chromium.launch({...(process.env.PLAYWRIGHT_CHANNEL ? {channel:process.env.PLAYWRIGHT_CHANNEL} : {}), headless: true});
   const failures = [];
   const check = (condition, message) => { if (!condition) failures.push(message); };
   const settle = async page => {
@@ -164,19 +164,19 @@ async function main() {
     check(await frame.locator('.shelf-book.is-loose').count() === 1, '散篇文稿应合成一本可打开的书');
     check(await frame.locator('.shelf-add').count() === 1, '有作品时应有「添加作品」入口');
     check((await frame.locator('#shelf-subtitle').textContent()).includes('3 部作品'), '书架副标题应显示作品数量');
-    const coverImage = frame.locator('.shelf-book[data-path="示例作品"] .book-image');
+    const coverImage = frame.locator('.shelf-book[data-path="我被好运盯住了"] .book-image');
     check(await coverImage.isVisible(), '已设置封面的作品应显示封面图');
     check(await frame.locator('.shelf-book[data-path="空作品"] .book-detail').textContent() === '还没有文稿', '空作品应提示还没有文稿');
-    const firstTitle = await frame.locator('.shelf-book[data-path="示例作品"] .book-title').textContent();
-    check(firstTitle === '《示例作品》', '书架标题应带书名号：' + firstTitle);
+    const firstTitle = await frame.locator('.shelf-book[data-path="我被好运盯住了"] .book-title').textContent();
+    check(firstTitle === '《我被好运盯住了》', '书架标题应带书名号：' + firstTitle);
     await page.screenshot({path: resolve(output, 'shelf-home.png')});
 
-    await frame.locator('.shelf-book[data-path="示例作品"]').click();
+    await frame.locator('.shelf-book[data-path="我被好运盯住了"]').click();
     await frame.locator('#editor-page').waitFor({state: 'visible'});
     check(await frame.locator('#shelf-page').isVisible() === false, '打开作品后书架应隐藏');
     check(await frame.locator('#workbench-sidebar').isVisible(), '打开作品后应展开文稿侧栏');
     check(await frame.locator('#draft-title').inputValue() === '第二章', '应打开「正文」里最近更新的第二章，实际：' + await frame.locator('#draft-title').inputValue());
-    check((await frame.locator('#document-status').textContent()).includes('示例作品/正文/第二章.md'), '应打开对应作品的正文路径');
+    check((await frame.locator('#document-status').textContent()).includes('我被好运盯住了/正文/第二章.md'), '应打开对应作品的正文路径');
     check(await frame.locator('#shelf-home').getAttribute('aria-pressed') === 'false', '进入作品后顶部书架按钮应为未选中');
     check(await frame.locator('#nav-editor').getAttribute('aria-pressed') === 'true', '进入作品后「写作」应为选中');
     check(await frame.locator('#sidebar-toggle').isVisible(), '进入作品后侧栏开关应可用');
@@ -202,7 +202,7 @@ async function main() {
       return canvas.toDataURL('image/png');
     });
     const png = Buffer.from(coverPng.split(',')[1], 'base64');
-    await frame.locator('.shelf-book[data-path="示例作品"]').click({button: 'right'});
+    await frame.locator('.shelf-book[data-path="我被好运盯住了"]').click({button: 'right'});
     await frame.locator('#shelf-menu').waitFor({state: 'visible'});
     check(await frame.locator('#shelf-menu button[data-action="remove-cover"]').isVisible(), '有封面时应显示移除封面');
     await settle(page);
@@ -210,15 +210,15 @@ async function main() {
     await frame.locator('#shelf-menu button[data-action="cover"]').click();
     await frame.locator('#shelf-cover-file').setInputFiles({name: '封面.png', mimeType: 'image/png', buffer: png});
     await frame.locator('#shelf-status').filter({hasText: '封面已更新'}).waitFor();
-    check(await frame.locator('.shelf-book[data-path="示例作品"] .book-image').isVisible(), '更换封面后书架应显示封面图');
+    check(await frame.locator('.shelf-book[data-path="我被好运盯住了"] .book-image').isVisible(), '更换封面后书架应显示封面图');
     await settle(page);
     await page.screenshot({path: resolve(output, 'shelf-cover-menu.png')});
 
-    await frame.locator('.shelf-book[data-path="示例作品"]').click({button: 'right'});
+    await frame.locator('.shelf-book[data-path="我被好运盯住了"]').click({button: 'right'});
     await frame.locator('#shelf-menu button[data-action="remove-cover"]').click();
     await frame.locator('#shelf-status').filter({hasText: '封面已移除'}).waitFor();
-    check(await frame.locator('.shelf-book[data-path="示例作品"] .book-image').count() === 0, '移除封面后书架应回到生成封面');
-    await frame.locator('.shelf-book[data-path="示例作品"]').click({button: 'right'});
+    check(await frame.locator('.shelf-book[data-path="我被好运盯住了"] .book-image').count() === 0, '移除封面后书架应回到生成封面');
+    await frame.locator('.shelf-book[data-path="我被好运盯住了"]').click({button: 'right'});
     check(await frame.locator('#shelf-menu button[data-action="remove-cover"]').isVisible() === false, '没有封面时不应显示移除封面');
     await page.keyboard.press('Escape');
 
@@ -318,3 +318,8 @@ main().catch(error => {
   console.error(error);
   process.exitCode = 1;
 });
+
+
+
+
+

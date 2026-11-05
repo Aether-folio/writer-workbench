@@ -1,10 +1,11 @@
 import {App, applyDocumentTheme, applyHostStyleVariables} from '@modelcontextprotocol/ext-apps';
 import {OpenAIExtensions} from '@openai/mcp-extensions/app';
-import {countWords,draftMessage,annotationBatchMessage,WritingClock,formatTime} from './core.mjs';
+import {countWords,quoteChatMessage,annotationBatchMessage,WritingClock,formatTime} from './core.mjs';
 import {attachWorkspace} from './workspace-ui.mjs';
 import {attachWritingFullscreen} from './writing-fullscreen.mjs';
 import {attachFloatingStats} from './floating-stats.mjs';
 import {attachParagraphEditor} from './paragraph-editor.mjs';
+import {attachWritingSuggestions} from './writing-suggestions-ui.mjs';
 
 const $ = id => document.getElementById(id);
 const editor = attachParagraphEditor($('draft-body'));
@@ -15,11 +16,13 @@ const menu = $('selection-menu');
 const menuButton = $('menu-quote');
 const dialog = $('annotation-dialog');
 const annotationBody = $('annotation-body');
+const quoteDialog=$('quote-chat-dialog'),quoteInstruction=$('quote-chat-instruction');
+let activeQuote=null,quoteSending=false,quoteComposing=false;
 const clock = new WritingClock();
 let selection = '';
 let menuSelection = '';
 let composing = false;
-let draftSupported = false;
+let messageSupported = false;
 let adding = false;
 let appConnected = false;
 let timer;
@@ -30,10 +33,15 @@ let savingAnnotation = false;
 let addingAnnotations=false,annotationChatNotice='';
 let hostDisplayMode='',availableDisplayModes=null,changingDisplay=false;
 
-const app = new App({name:'writer-workbench',version:'0.3.0'}, {availableDisplayModes:['fullscreen','inline']});
+const app = new App({name:'writer-workbench',version:'0.4.3'}, {availableDisplayModes:['fullscreen','inline']});
 const extensions = new OpenAIExtensions(app);
 const workspace=attachWorkspace({app,editor,title,clock,callTool:callAnnotationTool,notify:message=>{feedback.textContent=message;},onLoaded:()=>{renderStats();updateSelection();}});
 attachFloatingStats({callTool:callAnnotationTool,notify:message=>{feedback.textContent=message;}});
+const writingSuggestions=attachWritingSuggestions({editor,title,workspace,callTool:callAnnotationTool,
+  canMessage:()=>appConnected && messageSupported,
+  sendMessage:async params=>{const result=await extensions.message.send(params);if(result?.isError)throw new Error('写作请求发送失败，请重试。');},
+  notify:message=>{feedback.textContent=message;},
+});
 
 function applyHost(context) {
   if (context?.theme) applyDocumentTheme(context.theme);
@@ -76,11 +84,11 @@ function updateSelection() {
 }
 function renderAnnotationChatAction() {
   const button=$('annotations-to-chat');
-  button.disabled=!appConnected || !draftSupported || !annotations.length || adding || savingAnnotation;
-  button.textContent=addingAnnotations?'正在添加…':'全部添加到聊天';
-  button.title=!draftSupported?'当前宿主未开放聊天草稿接口':`将全部 ${annotations.length} 条批注汇总到当前聊天草稿`;
+  button.disabled=!appConnected || !messageSupported || !annotations.length || adding || savingAnnotation;
+  button.textContent=addingAnnotations?'正在发送…':'全部发送到聊天';
+  button.title=!messageSupported?'当前宿主未开放聊天发送接口':`直接发送全部 ${annotations.length} 条批注到当前聊天`;
   const status=$('annotation-chat-status');
-  status.textContent=addingAnnotations?'正在添加…':annotationChatNotice || (appConnected && !draftSupported?'当前宿主未开放聊天草稿接口。':'');
+  status.textContent=addingAnnotations?'正在发送…':annotationChatNotice || (appConnected && !messageSupported?'当前宿主未开放聊天发送接口。':'');
   status.hidden=!status.textContent;
 }
 function renderAnnotations() {
@@ -175,67 +183,87 @@ function onEdit() {
   updateSelection();
   if (!timer) timer = setInterval(renderStats,500);
 }
-async function addQuote(text) {
-  if (adding) return;
-  if (!draftSupported || !extensions.message) {
-    feedback.textContent = '当前宿主未开放聊天草稿接口，选区不会发送。';
-    return;
-  }
+function openQuoteChat(text) {
+  if(adding || !text.trim())return;
+  if(!messageSupported || !extensions.message){feedback.textContent='当前宿主未开放聊天发送接口。';return;}
+  activeQuote={text,title:title.value.trim() || '未命名草稿',path:workspace.path};
+  quoteComposing=false;
+  menu.hidden=true;$('quote-chat-selection').textContent=text;quoteInstruction.value='';$('quote-chat-error').textContent='';
+  quoteDialog.showModal();quoteInstruction.focus();
+}
+function closeQuoteChat() {
+  if(quoteSending)return;
+  quoteDialog.close();activeQuote=null;editor.focus();
+}
+async function sendQuoteChat() {
+  if(adding || quoteSending || !activeQuote)return;
+  let params;
+  try {params=quoteChatMessage(activeQuote.text,quoteInstruction.value,activeQuote.title,activeQuote.path);}
+  catch(error){$('quote-chat-error').textContent=error.message;quoteInstruction.focus();return;}
+  adding=true;quoteSending=true;quoteInstruction.readOnly=true;$('quote-chat-send').disabled=true;$('quote-chat-send').textContent='正在发送…';$('quote-chat-error').textContent='';renderAnnotationChatAction();
   try {
-    const params = draftMessage(text, title.value.trim() || '未命名草稿');
-    adding = true;
-    renderAnnotationChatAction();
-    menu.hidden = true;
-    feedback.textContent = '正在添加到聊天草稿…';
     const result = await extensions.message.send(params);
-    if (result?.isError) throw new Error('宿主拒绝了草稿引用请求。');
-    feedback.textContent = '选区已添加到当前聊天草稿，尚未发送。';
+    if (result?.isError) throw new Error('宿主未完成发送，请重试。');
+    quoteDialog.close();activeQuote=null;feedback.textContent='选区和对话内容已发送，等待 AI 回复。';
   } catch (error) {
-    feedback.textContent = '添加未完成：' + (error instanceof Error ? error.message : '请查看宿主提示。');
+    $('quote-chat-error').textContent='发送未完成：'+(error instanceof Error?error.message:'请重试。');
   } finally {
-    adding = false;
-    renderAnnotationChatAction();
-    updateSelection();
+    adding=false;quoteSending=false;quoteInstruction.readOnly=false;$('quote-chat-send').disabled=false;$('quote-chat-send').textContent='发送到聊天';renderAnnotationChatAction();
   }
 }
 
 async function addAnnotationsToChat() {
   if(adding || savingAnnotation || !annotations.length)return;
-  if(!draftSupported || !extensions.message){annotationChatNotice='当前宿主未开放聊天草稿接口，暂不可添加批注到聊天。';renderAnnotationChatAction();return;}
+  if(!messageSupported || !extensions.message){annotationChatNotice='当前宿主未开放聊天发送接口，暂不可发送批注。';renderAnnotationChatAction();return;}
   adding=true;addingAnnotations=true;annotationChatNotice='';renderAnnotationChatAction();
   try {
     const submitted=[...annotations],params=annotationBatchMessage(submitted),count=submitted.length;
     const result=await extensions.message.send(params);
-    if(result?.isError)throw new Error('宿主未完成批注添加，请重试。');
+    if(result?.isError)throw new Error('宿主未完成批注发送，请重试。');
     annotations=annotations.filter(annotation=>!submitted.includes(annotation));
     renderAnnotations();
-    annotationChatNotice=`已将 ${count} 条批注添加到当前聊天草稿，请在聊天窗确认发送。`;
+    annotationChatNotice=`已发送 ${count} 条批注，等待 AI 回复。`;
   } catch(error) {
-    annotationChatNotice='添加未完成：'+(error instanceof Error?error.message:'请重试。');
+    annotationChatNotice='发送未完成：'+(error instanceof Error?error.message:'请重试。');
   } finally {
     adding=false;addingAnnotations=false;renderAnnotationChatAction();feedback.textContent=annotationChatNotice;
   }
 }
 
-editor.addEventListener('compositionstart',()=>{composing=true;});
-editor.addEventListener('compositionend',()=>{composing=false;onEdit();});
-editor.addEventListener('input',onEdit);
+editor.addEventListener('compositionstart',event=>{if(!editor.isDecorationEvent(event))composing=true;});
+editor.addEventListener('compositionend',event=>{if(!editor.isDecorationEvent(event)){composing=false;onEdit();}});
+editor.addEventListener('input',event=>{if(!editor.isDecorationEvent(event))onEdit();});
 for (const event of ['select','keyup','pointerup']) editor.addEventListener(event,updateSelection);
 editor.addEventListener('contextmenu',event=>{
+  if(editor.isDecorationEvent(event))return;
   updateSelection();
-  if (!selection.trim()) return;
+  if(!selection && !editor.readOnly && (event.clientX || event.clientY)){
+    editor.setCaretFromPoint(event.clientX,event.clientY);updateSelection();
+  }
   event.preventDefault();
   menuSelection = selection;
-  menuButton.disabled = !draftSupported || adding;
+  menuButton.disabled = !selection.trim() || !messageSupported || adding;
+  $('menu-annotate').disabled=!selection.trim();
+  writingSuggestions.refreshAvailability();
   menu.hidden = false;
   menu.style.left = '8px';
   menu.style.top = '8px';
   const bounds = menu.getBoundingClientRect();
   menu.style.left = Math.max(8,Math.min(event.clientX,innerWidth-bounds.width-8)) + 'px';
   menu.style.top = Math.max(8,Math.min(event.clientY,innerHeight-bounds.height-8)) + 'px';
-  menuButton.focus();
+  menu.querySelector('button:not(:disabled)')?.focus();
 });
-menuButton.addEventListener('click',()=>addQuote(menuSelection));
+menuButton.addEventListener('click',()=>openQuoteChat(menuSelection));
+$('quote-chat-cancel').addEventListener('click',closeQuoteChat);
+$('quote-chat-send').addEventListener('click',sendQuoteChat);
+quoteDialog.addEventListener('cancel',event=>{event.preventDefault();closeQuoteChat();});
+quoteInstruction.addEventListener('compositionstart',()=>{quoteComposing=true;});
+quoteInstruction.addEventListener('compositionend',()=>{quoteComposing=false;});
+quoteInstruction.addEventListener('input',()=>{$('quote-chat-error').textContent='';});
+quoteInstruction.addEventListener('keydown',event=>{
+  if(event.key!=='Enter' || event.shiftKey || event.isComposing || quoteComposing || event.keyCode===229)return;
+  event.preventDefault();if(!event.repeat)sendQuoteChat();
+});
 $('menu-annotate').addEventListener('click',()=>openAnnotation());
 $('annotation-save').addEventListener('click',saveAnnotation);
 $('annotation-close').addEventListener('click',closeAnnotation);
@@ -244,7 +272,7 @@ $('annotations-to-chat').addEventListener('click',addAnnotationsToChat);
 dialog.addEventListener('cancel',event=>{event.preventDefault();closeAnnotation();});
 document.addEventListener('pointerdown',event=>{if (!menu.contains(event.target)) menu.hidden=true;});
 document.addEventListener('keydown',event=>{
-  if(event.key==='Escape' && !dialog.open){menu.hidden=true;editor.focus();}
+  if(event.key==='Escape' && !document.querySelector('dialog[open]')){menu.hidden=true;editor.focus();}
   if (!menu.hidden && ['ArrowDown','ArrowUp'].includes(event.key)) {
     event.preventDefault();
     const items=[...menu.querySelectorAll('button:not(:disabled)')];
@@ -281,13 +309,17 @@ app.connect().then(()=>{
   appConnected=true;
   clearTimeout(connectionTimeout);
   applyHost(app.getHostContext());
-  draftSupported=extensions.message != null;
+  messageSupported=extensions.message != null;
   $('host-status').textContent='已连接宿主';
-  menuButton.title=draftSupported ? '追加到当前聊天草稿，不自动发送' : '宿主未开放聊天草稿接口';
+  menuButton.title=messageSupported ? '在工作台填写对话内容后直接发送' : '宿主未开放聊天发送接口';
+  writingSuggestions.refreshAvailability();
   renderDisplayAction();
   updateSelection();
   renderAnnotations();
-  workspace.connected();
+  workspace.connected().then(async()=>{
+    const info=await callAnnotationTool('workspace_info',{});
+    await writingSuggestions.connected(Boolean(info.features?.writingSuggestions));
+  }).catch(error=>{feedback.textContent=error.message;});
 }).catch(error=>{
   clearTimeout(connectionTimeout);
   $('host-status').textContent='连接未完成';

@@ -32,6 +32,11 @@ export const CLIENT_ONLINE_WINDOW_MS = 5000;
 function createApi(workspace) {
   return {
     workspace_info: () => workspace.info(),
+    create_writing_request: input => workspace.createWritingRequest(input),
+    writing_requests: input => workspace.writingRequests(input),
+    get_writing_request: input => workspace.getWritingRequest(input),
+    update_writing_request: input => workspace.updateWritingRequest(input),
+    publish_writing_suggestion: input => workspace.publishWritingSuggestion(input),
     create_work: input => workspace.createWork(input),
     stats_preferences: input => workspace.statsPreferences(input ?? {}),
     save_stats_preferences: input => workspace.saveStatsPreferences(input),

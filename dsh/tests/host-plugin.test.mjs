@@ -50,12 +50,12 @@ test('host plugin exports its identity and required services', () => {
   assert.match(VERSION, /^\d+\.\d+\.\d+/);
 });
 
-test('apply registers the HTTP route and both model tools', async () => {
+test('apply registers the HTTP route and model tools including AI return', async () => {
   await withPlugin(async ({routes, tools}) => {
     assert.equal(routes.length, 1);
     assert.equal(routes[0].kind, 'prefix');
     assert.equal(routes[0].path, '/writer-workbench');
-    assert.deepEqual(tools.map(tool => tool.name).sort(), ['open_workbench', 'workbench_status']);
+    assert.deepEqual(tools.map(tool => tool.name).sort(), ['get_writing_request', 'open_workbench', 'publish_writing_suggestion', 'workbench_status']);
     for (const tool of tools) {
       assert.equal(tool.parameters.type, 'object');
       assert.equal(tool.output.schema.type, 'object');

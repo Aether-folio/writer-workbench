@@ -11,9 +11,10 @@
  * 本文件由 esbuild 打成 IIFE；react 从 __ModuleLoader__ 的 factory require 取得。
  */
 import {createHostBridge} from './bridge.mjs';
+import {deliverWorkbenchMessage} from './chat-message.mjs';
 
 const PLUGIN_ID = 'dsh-writer-workbench';
-const VERSION = '0.3.0-dsh.3';
+const VERSION = '0.4.3-dsh.1';
 
 /** 右侧栏标签类型的稳定标识（同时是 body/title 槽位的 key）。 */
 const TAB_ID = 'dsh-writer-workbench:writer-workbench';
@@ -77,14 +78,6 @@ function currentSessionId(ctx) {
   return ids.length === 1 ? ids[0] : undefined;
 }
 
-function draftText(params) {
-  const content = Array.isArray(params?.content) ? params.content : [];
-  return content
-    .filter(item => item !== null && typeof item === 'object' && item.type === 'text' && typeof item.text === 'string')
-    .map(item => item.text)
-    .join('\n');
-}
-
 function focusComposer() {
   try {
     const column = document.querySelector('#root [data-slot="conversation"]');
@@ -98,26 +91,9 @@ function focusComposer() {
   }
 }
 
-/** 把工作台的选区/批注写进当前会话的聊天草稿（等价于 Codex 的 openai/message, send:false）。 */
+/** AI 写作请求直接发送；普通选区和批注仍追加到聊天草稿。 */
 function appendDraft(ctx, params) {
-  const text = draftText(params);
-  if (text.trim() === '') throw new Error('没有可添加的文字。');
-  const meta = params?._meta?.['openai/message'];
-  if (meta !== null && typeof meta === 'object' && meta.send === true) {
-    throw new Error('DSH 版码字工作台只支持添加到聊天草稿，不会自动发送。');
-  }
-  const sessionId = currentSessionId(ctx);
-  if (sessionId === undefined) throw new Error('没有活动的会话，请先打开一个对话。');
-  const sessions = safeGet(ctx, 'sessions');
-  const scope = sessions?.scope?.(sessionId);
-  if (scope === undefined) throw new Error('当前会话尚未就绪，请稍后再试。');
-  const conversation = safeGet(ctx, 'conversation');
-  const input = conversation?.input?.for?.(scope);
-  if (input === undefined || input === null) throw new Error('宿主没有提供聊天输入框。');
-  const current = String(input.state?.getSnapshot?.().draft ?? '');
-  const next = current.trim() === '' ? text : current.replace(/\s+$/, '') + '\n\n' + text;
-  input.setDraft(next);
-  focusComposer();
+  return deliverWorkbenchMessage({params,sessionId:currentSessionId(ctx),sessions:safeGet(ctx,'sessions'),conversation:safeGet(ctx,'conversation'),focusComposer});
 }
 
 function makeFactory() {

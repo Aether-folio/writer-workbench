@@ -2,19 +2,23 @@
 export function attachParagraphEditor(editor) {
   const blocks=new Set(['DIV','P']);
   let locked=false,cachedStart=0,cachedEnd=0,historyBase='',canRedo=false;
-  function updateLayout(){editor.dataset.inlineStart=String(Boolean(editor.firstChild && !blocks.has(editor.firstChild.nodeName)));}
+  const decoration=node=>node?.nodeType===Node.ELEMENT_NODE && node.hasAttribute('data-editor-decoration');
+  const inDecoration=node=>Boolean((node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement)?.closest('[data-editor-decoration]'));
+  function updateLayout(){const first=[...editor.childNodes].find(node=>!decoration(node));editor.dataset.inlineStart=String(Boolean(first && !blocks.has(first.nodeName)));}
   function model() {
     const segments=[];
     const add=(text,node,offset=0)=>{if(text)segments.push({text,node,offset});};
     function visit(parent) {
-      const children=[...parent.childNodes];
+      const all=[...parent.childNodes],indices=new Map(all.map((node,index)=>[node,index]));
+      const children=all.filter(node=>!decoration(node));
       children.forEach((child,index)=>{
         const previous=children[index-1];
-        if(index && (blocks.has(child.nodeName) || blocks.has(previous.nodeName)))add('\n',parent,index);
+        const domIndex=indices.get(child);
+        if(index && (blocks.has(child.nodeName) || blocks.has(previous.nodeName)))add('\n',parent,domIndex);
         if(child.nodeType===Node.TEXT_NODE)add(child.data,child);
         else if(child.nodeName==='BR') {
           // Chromium keeps a final BR as a caret placeholder in empty blocks.
-          if(children.length>1 && index<children.length-1)add('\n',parent,index+1);
+          if(children.length>1 && index<children.length-1)add('\n',parent,domIndex+1);
         } else visit(child);
       });
     }
@@ -33,8 +37,12 @@ export function attachParagraphEditor(editor) {
     return total;
   }
   function captureSelection() {
+    // Moving focus to a context-menu button may restore Chromium's old caret.
+    // Keep the insertion bookmark captured while this editor held focus.
+    if(document.activeElement!==editor)return;
     const selection=getSelection();
     if(!selection?.rangeCount || !editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode))return;
+    if(inDecoration(selection.anchorNode) || inDecoration(selection.focusNode))return;
     const segments=model();
     const anchor=pointOffset(selection.anchorNode,selection.anchorOffset,segments);
     const focus=pointOffset(selection.focusNode,selection.focusOffset,segments);
@@ -47,8 +55,8 @@ export function attachParagraphEditor(editor) {
       if(offset<total+segment.text.length)return [segment.node,segment.offset];
       total+=segment.text.length;
     }
-    const last=editor.lastChild;
-    return last ? [last,last.childNodes.length] : [editor,0];
+    const last=[...editor.childNodes].filter(node=>!decoration(node)).at(-1);
+    return last ? [last,last.nodeType===Node.TEXT_NODE?last.data.length:last.childNodes.length] : [editor,0];
   }
   editor.setSelectionRange=(start,end=start)=>{
     const segments=model(),length=segments.reduce((sum,segment)=>sum+segment.text.length,0);
@@ -57,6 +65,23 @@ export function attachParagraphEditor(editor) {
     const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
   };
   editor.select=()=>editor.setSelectionRange(0,text().length);
+  editor.setCaretFromPoint=(x,y)=>{
+    const bounds=editor.getBoundingClientRect();
+    if(x<bounds.left || x>bounds.right || y<bounds.top || y>bounds.bottom)return false;
+    const position=document.caretPositionFromPoint?.(x,y);
+    let range;
+    if(position){range=document.createRange();range.setStart(position.offsetNode,position.offset);range.collapse(true);}
+    else range=document.caretRangeFromPoint?.(x,y);
+    if(!range || !editor.contains(range.startContainer) || inDecoration(range.startContainer))return false;
+    editor.focus({preventScroll:true});
+    const selection=getSelection();selection.removeAllRanges();selection.addRange(range);captureSelection();return true;
+  };
+  editor.placeDecoration=(element,offset)=>{
+    element.dataset.editorDecoration='true';element.contentEditable='false';
+    const range=document.createRange();range.setStart(...locate(offset,model()));range.collapse(true);range.insertNode(element);
+    updateLayout();
+  };
+  editor.isDecorationEvent=event=>inDecoration(event.target);
   Object.defineProperties(editor,{
     value:{get:text,set(value){
       const fragment=document.createDocumentFragment();
@@ -77,13 +102,16 @@ export function attachParagraphEditor(editor) {
     editor.scrollTop+=bounds.top-viewport.top-28;
   };
   editor.addEventListener('beforeinput',event=>{
+    if(inDecoration(event.target))return;
     if(locked || ['formatBold','formatItalic','formatUnderline','insertOrderedList','insertUnorderedList','insertLink'].includes(event.inputType))event.preventDefault();
     if(event.inputType==='historyUndo' && text()===historyBase || event.inputType==='historyRedo' && !canRedo)event.preventDefault();
   });
   editor.addEventListener('keydown',event=>{
+    if(inDecoration(event.target))return;
     if((event.ctrlKey || event.metaKey) && ['b','i','u'].includes(event.key.toLowerCase()))event.preventDefault();
   });
   editor.addEventListener('paste',event=>{
+    if(inDecoration(event.target))return;
     event.preventDefault();if(locked)return;
     const value=event.clipboardData?.getData('text/plain');if(value===undefined)return;
     const escaped=value.replace(/\r\n?/g,'\n').split('\n').map(line=>{
@@ -93,8 +121,15 @@ export function attachParagraphEditor(editor) {
     document.execCommand('insertHTML',false,escaped.map(line=>`<div>${line}</div>`).join(''));
   });
   editor.addEventListener('drop',event=>event.preventDefault());
+  editor.addEventListener('copy',event=>{
+    if(inDecoration(event.target) || !event.clipboardData)return;
+    captureSelection();
+    if(cachedStart===cachedEnd)return;
+    event.clipboardData.setData('text/plain',text().slice(cachedStart,cachedEnd));event.preventDefault();
+  });
   editor.addEventListener('input',updateLayout);
   editor.addEventListener('input',event=>{canRedo=event.inputType==='historyUndo' || event.inputType==='historyRedo';});
   document.addEventListener('selectionchange',captureSelection);
+  editor.disposeParagraphEditor=()=>document.removeEventListener('selectionchange',captureSelection);
   editor.value='';return editor;
 }

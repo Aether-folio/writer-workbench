@@ -13,6 +13,8 @@ for(const file of ['server.mjs','editor.html'])await copyFile(resolve(root,'dist
 for(const dir of ['.codex-plugin','skills'])await cp(resolve(root,dir),resolve(runtime,dir),{recursive:true});
 await mkdir(resolve(runtime,'assets'),{recursive:true});await copyFile(resolve(root,'assets/icon.svg'),resolve(runtime,'assets/icon.svg'));
 await copyFile(resolve(root,'.mcp.json'),resolve(runtime,'.mcp.json'));
+const configured=spawnSync(process.execPath,[resolve(root,'scripts/configure-local.mjs')],{cwd:root,stdio:'inherit'});
+if(configured.error)throw configured.error;if(configured.status!==0)process.exit(configured.status || 1);
 const editor=await readFile(resolve(root,'dist/editor.html'));
 assert.ok(editor.includes(Buffer.from('id="shelf-home"')), 'Editor is missing the return-to-bookshelf button');
 assert.ok(editor.includes(Buffer.from('id="shelf-page"')), 'Editor is missing the bookshelf');

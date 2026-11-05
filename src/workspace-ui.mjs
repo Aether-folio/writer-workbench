@@ -318,6 +318,25 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     $('document-status').textContent=path ? '已打开 · '+path : '草稿已自动恢复';
     if(path)selectedFolder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'文稿';
     renderFiles();sidebar.renderOutline();onLoaded();
+    documentChanged();
+  }
+  function documentChanged() {document.dispatchEvent(new CustomEvent('workbench:documentchange',{detail:{path}}));}
+  async function acceptWritingSuggestion(item) {
+    if(creating || !connected)throw new Error('正在处理文稿，请稍后重试。');
+    if(path!==item.path)throw new Error('请回到建议所属的文稿后采纳。');
+    const wasReadOnly=editor.readOnly,wasTitleReadOnly=title.readOnly;
+    creating=true;editor.readOnly=true;title.readOnly=true;clearTimeout(saveTimeout);
+    try {
+      await flushDocument();
+      const result=await callTool('update_writing_request',{id:item.id,version:item.version,action:'accept',body:editor.value,...(path?{revision}:{})});
+      editor.value=result.document.body;
+      onEdit(); // Accepted text counts once; merely viewing a proposal never counts.
+      revision=result.document.revision || '';dirty=false;clearTimeout(saveTimeout);
+      $('document-status').textContent='已采纳并保存'+(path?' · '+path:'到草稿');
+      sidebar.renderOutline();onLoaded();documentChanged();
+      await flushRecords().catch(()=>{});
+      return result;
+    } finally {creating=false;editor.readOnly=wasReadOnly;title.readOnly=wasTitleReadOnly;}
   }
   async function renameFile(filePath,rawName) {
     if(creating) throw new Error('正在保存当前文稿，请稍后再试。');
@@ -339,6 +358,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         selectedFolder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'文稿';
         $('document-status').textContent='已重命名 · '+path;
         sidebar.renderFiles(fileList,path,directoryList);sidebar.renderOutline();updateStatsWork();onLoaded();
+        documentChanged();
       }
       notify(`已重命名为“${result.document.title}”。`);
       return result.document;
@@ -377,7 +397,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         $('document-status').textContent='已重命名 · '+path;
       }
       if(selectedFolder===folderPath || selectedFolder.startsWith(folderPath+'/')) selectedFolder=nextPath+selectedFolder.slice(folderPath.length);
-      if(inside) {sidebar.renderFiles(fileList,path,directoryList);sidebar.renderOutline();onLoaded();}
+      if(inside) {sidebar.renderFiles(fileList,path,directoryList);sidebar.renderOutline();onLoaded();documentChanged();}
       updateStatsWork();
       notify(`文件夹已重命名为“${result.folder.name}”。`);
       return result.folder;
@@ -655,7 +675,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   document.addEventListener('keydown',async event=>{if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();await afterTitleCommit();if(creating)return;if(path)flushDocument().then(()=>flushRecords()).catch(()=>{});else if(!$('document-dialog').open)openNameDialog('current');}});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){pauseClock();flushDocument().catch(()=>{});flushRecords().catch(()=>{});}});
   return {
-    onEdit,collectTime,flushRecords,finishWriting,applyAppearance,get added(){return added;},get path(){return path;},get finishStatus(){return finishStatus;},get canFinish(){return connected && !creating;},
+    onEdit,collectTime,flushRecords,flushDocument,acceptWritingSuggestion,finishWriting,applyAppearance,get added(){return added;},get path(){return path;},get finishStatus(){return finishStatus;},get canFinish(){return connected && !creating;},
     async connected() {
       try {
         const info=await callTool('workspace_info',{});connected=true;acceptWorkspaceInfo(info);settings=info.settings;applyAppearance();
@@ -665,3 +685,5 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     },
   };
 }
+
+

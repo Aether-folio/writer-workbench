@@ -1,4 +1,4 @@
-const {chromium}=require('playwright');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {readFileSync}=require('node:fs');
 const {resolve}=require('node:path');
 const assert=require('node:assert/strict');

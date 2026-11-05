@@ -1,0 +1,147 @@
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const {fixture}=require('./browser.cjs');
+const assert=require('node:assert/strict');
+const {mkdtemp,rm}=require('node:fs/promises');
+const {join,resolve}=require('node:path');
+const {pathToFileURL}=require('node:url');
+
+(async()=>{
+ const {createWorkspace}=await import(pathToFileURL(resolve(__dirname,'../src/workspace.mjs')).href);
+ const directory=await mkdtemp(resolve(__dirname,'../.test-temp/writer-ai-browser-'));
+ const workspace=createWorkspace(directory);await workspace.init();
+ const original='他把信压在桌角，转身走向门口。\n窗外仍下着雨。';
+ const doc=await workspace.saveDocument({path:'文稿/联动测试.md',body:original});
+ const routes={workspace_info:()=>workspace.info(),read_document:a=>workspace.readDocument(a.path),save_document:a=>workspace.saveDocument(a),save_draft:a=>workspace.saveDraft(a),save_writing_records:a=>workspace.saveRecords(a.records),stats_preferences:a=>workspace.statsPreferences(a),writing_requests:a=>workspace.writingRequests(a),create_writing_request:a=>workspace.createWritingRequest(a),update_writing_request:a=>workspace.updateWritingRequest(a)};
+ const browser=await chromium.launch({...(process.env.PLAYWRIGHT_CHANNEL ? {channel:process.env.PLAYWRIGHT_CHANNEL} : {}),headless:true});
+ try {
+  const {page,frame,errors}=await fixture(browser,true,{},(name,args)=>{
+    if(!routes[name])throw new Error('Unknown test API '+name);
+    return routes[name](args);
+  });
+  const editor=frame.locator('#draft-body');
+  await frame.locator('#shelf-home').click();
+  await frame.locator('.shelf-book').first().click();
+  await frame.locator('#document-status').filter({hasText:'已打开'}).waitFor();
+  await frame.locator('#ai-writing-open:enabled').waitFor();
+  async function requestAt(offset,instruction) {
+    await editor.evaluate((el,pos)=>{el.focus();el.setSelectionRange(pos);},offset);
+    await frame.locator('#ai-writing-open').click();
+    await frame.locator('#ai-writing-instruction').fill(instruction);
+    await frame.locator('#ai-writing-submit').click();
+    await frame.locator('#ai-writing-dialog').waitFor({state:'hidden'});
+    const requests=(await workspace.writingRequests({path:doc.path})).requests;
+    return requests.at(-1);
+  }
+  async function deliver(item,text) {
+    await workspace.publishWritingSuggestion({requestId:item.id,generation:item.generation,text});
+    await page.clock.runFor(1600);
+    await frame.locator(`[data-request-id="${item.id}"] .ai-suggestion-body`).filter({hasText:text.split('\n')[0]}).waitFor();
+  }
+  const first=await requestAt(9,'写一个他开门前犹豫的动作，接在逗号后。');
+  assert.equal(first.offset,9);
+  const messages=await page.evaluate(()=>window.testMessages);
+  assert.deepEqual(messages[0].params._meta,{'openai/message':{target:'active',send:true}});
+  assert.equal(await page.evaluate(()=>window.submitted),1);
+  assert.equal(await page.evaluate(()=>window.existingDraft),'我已有的问题。');
+  assert.equal(messages[0].params.content[0].text.includes(first.id),false);
+  assert.equal(messages[0].params.content[0].text.includes('publish_writing_suggestion'),false);
+  assert.equal(messages[0].params.content[0].text.includes('【在此插入】'),false);
+  assert.equal(await frame.locator('.ai-suggestion').getByRole('button',{name:'重新发送请求',exact:true}).isVisible(),false);
+  await deliver(first,'他伸出的手停了一瞬。\n\n「算了。」');
+  const box=frame.locator(`[data-request-id="${first.id}"]`);
+  assert.equal(await box.locator('.ai-suggestion-body').evaluate(el=>el.value),'他伸出的手停了一瞬。\n「算了。」');
+  assert.equal(await box.locator('.ai-suggestion-body > div').count(),2);
+  const paragraphGap=await box.locator('.ai-suggestion-body').evaluate(el=>el.children[1].getBoundingClientRect().top-el.children[0].getBoundingClientRect().bottom);
+  assert.equal(paragraphGap,34);
+  assert.equal(await editor.evaluate(el=>el.value),original);
+  assert.equal((await workspace.readDocument(doc.path)).body,original);
+  const style=await box.locator('.ai-suggestion-body').evaluate(el=>{const a=getComputedStyle(el),b=getComputedStyle(document.getElementById('draft-body'));return [a.fontFamily===b.fontFamily,a.fontSize===b.fontSize,a.lineHeight===b.lineHeight];});
+  assert.deepEqual(style,[true,true,true]);
+  assert.equal(await frame.locator('#session-count').textContent(),'0');
+  await box.locator('.ai-suggestion-body').fill('他指尖一顿，又收了回来。');
+  await page.clock.runFor(700);
+  await box.locator('.ai-suggestion-status').filter({hasText:'已保存'}).waitFor();
+  assert.equal(await editor.evaluate(el=>el.value),original);
+  assert.equal(await frame.locator('#session-count').textContent(),'0');
+  await page.screenshot({path:resolve(__dirname,'../test-results/ai-insert-review.png')});
+  await box.getByRole('button',{name:'批注重生成',exact:true}).click();
+  const requirements=frame.locator('#ai-writing-instruction');
+  await requirements.press('Enter');
+  await frame.locator('#ai-writing-error').filter({hasText:'请填写'}).waitFor();
+  assert.equal(await page.evaluate(()=>window.submitted),1);
+  await requirements.fill('动作更克制。');
+  await requirements.press('Shift+Enter');
+  await requirements.pressSequentially('不要说话。');
+  assert.equal(await requirements.inputValue(),'动作更克制。\n不要说话。');
+  assert.equal(await page.evaluate(()=>window.submitted),1);
+  // Enter used to confirm a Chinese IME candidate must not submit the dialog.
+  await requirements.dispatchEvent('compositionstart');
+  await requirements.dispatchEvent('keydown',{key:'Enter',isComposing:true});
+  await requirements.dispatchEvent('compositionend');
+  await requirements.dispatchEvent('keydown',{key:'Enter',keyCode:229});
+  await requirements.dispatchEvent('keydown',{key:'Enter',repeat:true});
+  assert.equal(await frame.locator('#ai-writing-dialog').isVisible(),true);
+  assert.equal(await page.evaluate(()=>window.submitted),1);
+  await page.evaluate(()=>{window.testHoldMessages=true;window.testMessageReplies=[];});
+  await requirements.press('Enter');
+  await frame.locator('#ai-writing-submit:disabled').waitFor();
+  await requirements.dispatchEvent('keydown',{key:'Enter'});
+  await frame.locator('#ai-writing-submit').dispatchEvent('click');
+  assert.equal(await page.evaluate(()=>window.submitted),2);
+  assert.equal(await page.evaluate(()=>window.testMessageReplies.length),1);
+  await page.evaluate(()=>{window.testHoldMessages=false;window.testMessageReplies.splice(0).forEach(reply=>reply());});
+  await frame.locator('#ai-writing-dialog').waitFor({state:'hidden'});
+  const [again]=(await workspace.writingRequests({path:doc.path})).requests;
+  assert.equal(again.generation,2);assert.equal(again.text,'他指尖一顿，又收了回来。');
+  assert.ok(again.instruction.includes('动作更克制。\n不要说话。'));
+  assert.deepEqual(await page.evaluate(()=>window.testMessages.at(-1).params._meta),{'openai/message':{target:'active',send:true}});
+  assert.equal((await page.evaluate(()=>window.testMessages.at(-1).params.content[0].text)).includes(again.text),false);
+  assert.equal((await workspace.getWritingRequest({path:doc.path,instruction:again.instruction})).previousText,again.text);
+  await assert.rejects(workspace.publishWritingSuggestion({requestId:first.id,generation:1,text:'旧轮次'}));
+  await deliver(again,'他拇指擦过信封的折角。\n\n他没有开口。');
+  await box.getByRole('button',{name:'采纳',exact:true}).click();
+  await frame.locator('#document-status').filter({hasText:'已采纳并保存'}).waitFor();
+  const expected=original.slice(0,9)+'他拇指擦过信封的折角。\n他没有开口。'+original.slice(9);
+  assert.equal(await editor.evaluate(el=>el.value),expected);
+  assert.equal((await workspace.readDocument(doc.path)).body,expected);
+  assert.equal(await editor.locator(':scope > div').count(),3);
+  assert.equal(await editor.evaluate(el=>el.children[1].getBoundingClientRect().top-el.children[0].getBoundingClientRect().bottom),paragraphGap);
+  assert.equal(await frame.locator('.ai-suggestion').count(),0);
+  assert.ok(Number(await frame.locator('#session-count').textContent())>0);
+  const second=await requestAt(expected.length,'补一个段尾。');
+  await deliver(second,'<script>不能作为 HTML 执行</script>');
+  assert.equal(await frame.locator('.ai-suggestion script').count(),0);
+  // Rejecting a draft must work even with an empty or unsaved local edit.
+  await frame.locator('.ai-suggestion-body').fill('');
+  await frame.locator('.ai-suggestion').getByRole('button',{name:'不采纳',exact:true}).click();
+  await frame.locator('.ai-suggestion').waitFor({state:'detached'});
+  assert.equal((await workspace.readDocument(doc.path)).body,expected);
+  // A rejected send leaves a durable request and an explicit retry path.
+  await page.evaluate(()=>{window.testMessageError=true;});
+  const third=await requestAt(expected.length,'补一句环境。');
+  const thirdBox=frame.locator(`[data-request-id="${third.id}"]`);
+  await thirdBox.locator('.ai-suggestion-status').filter({hasText:'重试'}).waitFor();
+  await page.evaluate(()=>{window.testMessageError=false;});
+  const submittedBeforeRetry=await page.evaluate(()=>window.submitted);
+  await thirdBox.getByRole('button',{name:'重新发送请求',exact:true}).click();
+  await thirdBox.locator('.ai-suggestion-status').filter({hasText:'已发送'}).waitFor();
+  assert.equal(await page.evaluate(()=>window.submitted),submittedBeforeRetry+1);
+  assert.equal(await page.evaluate(()=>window.existingDraft),'我已有的问题。');
+  await deliver(third,'雨声渐渐轻了。');
+  // Switch away and back; proposal text stays separate and remounts at its anchor.
+  const other=await workspace.saveDocument({path:'文稿/另一章.md',body:'另一章正文。'});
+  await frame.locator('#refresh-files').click();
+  await frame.locator('.file-entry').filter({hasText:'另一章'}).click();
+  await frame.locator('#document-status').filter({hasText:'另一章.md'}).waitFor();
+  assert.equal(await frame.locator('.ai-suggestion').count(),0);
+  await frame.locator('.file-entry').filter({hasText:'联动测试'}).click();
+  await thirdBox.locator('.ai-suggestion-body').filter({hasText:'雨声渐渐轻了'}).waitFor();
+  assert.equal(await editor.evaluate(el=>el.value),expected);
+  await page.setViewportSize({width:390,height:850});
+  await page.screenshot({path:resolve(__dirname,'../test-results/ai-insert-mobile.png')});
+  assert.ok(await thirdBox.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth;}));
+  assert.deepEqual(errors,[]);
+  await page.close();
+  console.log('PASS: real proposal storage, middle/end insertion, matching typography, editing, regeneration, stale answer rejection, acceptance/save, discard, no pending word counts, chat retry, chapter isolation, narrow layout.');
+ } finally {await browser.close();await rm(directory,{recursive:true,force:true});}
+})().catch(error=>{console.error(error);process.exitCode=1;});

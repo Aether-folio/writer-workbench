@@ -135,8 +135,8 @@ test('删除拒绝旧版本、越界和链接，回收站数据不能用于越�
 }));
 
 test('添加作品创建三个空文件夹，作品名与文稿路径重启可恢复',()=>fixture(async(store,directory)=>{
-  const result=await store.createWork({name:'示例长篇'});
-  assert.equal(result.work.name,'示例长篇');
+  const result=await store.createWork({name:'我被好运盯上了'});
+  assert.equal(result.work.name,'我被好运盯上了');
   assert.deepEqual(new Set(await readdir(join(store.root,result.work.path))),new Set(['设定','正文','草稿']));
   assert.deepEqual(await store.scan(),[]);
   const info=await createWorkspace(directory).info();

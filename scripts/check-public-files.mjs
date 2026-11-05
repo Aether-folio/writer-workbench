@@ -1,6 +1,9 @@
 import {execFileSync} from 'node:child_process';
 import {readFile} from 'node:fs/promises';
-const files=execFileSync('git',['ls-files','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);
+const args=process.argv.slice(2);
+if(args.length && (args.length!==2 || args[0]!=='--manifest'))throw new Error('Usage: node scripts/check-public-files.mjs [--manifest files.json]');
+const files=args.length ? JSON.parse(await readFile(args[1],'utf8')) : execFileSync('git',['ls-files','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);
+if(!Array.isArray(files) || files.some(name=>typeof name!=='string' || name.startsWith('/') || name.includes('..') || name.includes('\\') || /^[A-Za-z]:/.test(name)))throw new Error('Expected a list of repository-relative file paths.');
 if(!files.length)throw new Error('No staged or tracked files; inspect and stage the intended source files first.');
 const forbidden=/(^|\/)(码字工作台|文稿|正文|草稿|设定|人物|大纲|数据|node_modules|test-results|\.test-temp|runtime|dist|output|video)(\/|$)|^dsh\/lib\/|^dsh\/assets\/editor\.html$|(^|\/)\.env(?:\.|$)|\.(?:log|bak|tmp)$/;
 const patterns=[['credential',/\b(?:ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{40,}|sk-[A-Za-z0-9]{30,})\b/],['private key',/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],['personal user path',/[A-Z]:[\\/]Users[\\/](?!Public\b|<)/i]];
@@ -13,3 +16,4 @@ for(const name of files){
 }
 if(errors.length){console.error(errors.join('\n'));process.exitCode=1;}
 else console.log(`Public-file check passed for ${files.length} tracked/staged files. Review the actual diff before publishing.`);
+

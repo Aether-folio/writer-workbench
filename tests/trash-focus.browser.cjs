@@ -1,8 +1,7 @@
-const {chromium}=require('playwright');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {fixture}=require('./browser.cjs');
 const assert=require('node:assert/strict');
 const {resolve}=require('node:path');
-require('node:fs').mkdirSync(resolve(__dirname,'../test-results'),{recursive:true});
 (async()=>{
  const browser=await chromium.launch({...(process.env.PLAYWRIGHT_CHANNEL ? {channel:process.env.PLAYWRIGHT_CHANNEL} : {}),headless:true});
  try {

@@ -1,34 +1,181 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+  把码字工作台（DSH 适配层）安装到一个 DSH profile，并可选安装技能。
+
+.DESCRIPTION
+  1. 构建 lib/ 与 assets/editor.html；
+  2. 用 DSH CLI 以 link: 方式安装本目录；
+  3. 确认 dsh.profile.bundles 已选中本插件；
+  4. 可选：把 writing-workbench 技能复制到 ~/.dsh/skills；
+  5. 打印重启提示。
+
+  本脚本不修改 Codex 版文件，也不会删除「码字工作台」数据目录。
+
+.PARAMETER Profile
+  DSH profile 名，桌面应用默认 desktop。
+
+.PARAMETER Workspace
+  作品目录；默认 D:\AI-Workspace\apps\writer-workbench，可由 WORKBENCH_WORKSPACE 覆盖。
+  数据根为 <插件目录>\码字工作台\，其下每个作品目录是一部作品，
+  作品内固定为 正文/、设定/、草稿/。与默认值不同时，会写一条 profile 层覆盖行。
+
+.PARAMETER DshCmd
+  dsh 命令路径；省略时自动查找 PATH，再查找 DeepSeek Harness 默认安装位置。
+
+.PARAMETER SkipBuild
+  跳过构建，直接安装现有 lib/。
+
+.PARAMETER SkipSkill
+  不安装 writing-workbench 技能。
+
+.EXAMPLE
+  .\install.ps1
+  .\install.ps1 -Profile desktop -Workspace "D:\AI-Workspace\apps\writer-workbench"
+#>
 [CmdletBinding()]
-param([string]$Profile='desktop',[string]$Workspace,[string]$DshCmd,[switch]$SkipSkill)
-$ErrorActionPreference='Stop'
-if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'lib/index.js'))) { throw '请先在仓库根目录运行 npm ci 和 npm run build。' }
-if (-not $Workspace) { $Workspace = if($env:WORKBENCH_WORKSPACE){$env:WORKBENCH_WORKSPACE}else{Join-Path $PSScriptRoot '..'} }
-$dataRoot=[System.IO.Path]::GetFullPath($Workspace)
-if (-not $DshCmd) { $found=Get-Command dsh -ErrorAction SilentlyContinue;if(-not $found){throw '找不到 dsh，请通过 -DshCmd 指定命令路径。'};$DshCmd=$found.Source }
-& $DshCmd plugin --profile $Profile add $PSScriptRoot
-if($LASTEXITCODE -ne 0){throw 'DSH 安装失败。'}
-$profileDir=Join-Path $env:USERPROFILE ('.dsh/profiles/'+$Profile)
-$manifest=Join-Path $profileDir 'package.json'
-if(-not(Test-Path -LiteralPath $manifest)){throw '未找到 profile 清单。请先启动一次该 profile。'}
-$config=Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
-if(-not $config.PSObject.Properties['dsh']){$config|Add-Member -NotePropertyName dsh -NotePropertyValue ([pscustomobject]@{})}
-if(-not $config.dsh.PSObject.Properties['profile']){$config.dsh|Add-Member -NotePropertyName profile -NotePropertyValue ([pscustomobject]@{})}
-if(-not $config.dsh.profile.PSObject.Properties['bundles']){$config.dsh.profile|Add-Member -NotePropertyName bundles -NotePropertyValue @()}
-$bundle=@($config.dsh.profile.bundles)
-if($bundle -notcontains 'dsh-writer-workbench'){$config.dsh.profile.bundles=@($bundle+'dsh-writer-workbench');[IO.File]::WriteAllText($manifest,($config|ConvertTo-Json -Depth 32),[Text.UTF8Encoding]::new($false))}
-$patch=Join-Path $profileDir 'cordis.patch.yml'
-$existing=if(Test-Path -LiteralPath $patch){[IO.File]::ReadAllText($patch)}else{''}
-if($existing -match '(?m)^\s*-\s*id:\s*writer-workbench\s*$'){Write-Host '已有工作台配置，保留原配置；请核对 workspace。'}
-else{
- $escaped=$dataRoot.Replace("'","''")
- $block="`n- id: writer-workbench`n  name: dsh-writer-workbench`n  config:`n    workspace: '$escaped'`n"
- [IO.File]::WriteAllText($patch,$existing+$block,[Text.UTF8Encoding]::new($false))
+param(
+  [string]$Profile = 'desktop',
+  [string]$Workspace,
+  [string]$DshCmd,
+  [switch]$SkipBuild,
+  [switch]$SkipSkill
+)
+
+$ErrorActionPreference = 'Stop'
+$packageRoot = $PSScriptRoot
+if (-not $Workspace) {
+  # 与 Codex 和 DSH 宿主采用相同的默认目录。
+  $Workspace = if ($env:WORKBENCH_WORKSPACE) { $env:WORKBENCH_WORKSPACE } else { 'D:\AI-Workspace\apps\writer-workbench' }
+  $Workspace = [System.IO.Path]::GetFullPath($Workspace)
+} else {
+  $Workspace = (Resolve-Path -LiteralPath $Workspace).Path
 }
-if(-not $SkipSkill){
- $source=Join-Path $PSScriptRoot 'skills/writing-workbench'
- $target=Join-Path $env:USERPROFILE '.dsh/skills/writing-workbench'
- New-Item -ItemType Directory -Path $target -Force | Out-Null
- Get-ChildItem -LiteralPath $source -File | ForEach-Object {Copy-Item -LiteralPath $_.FullName -Destination $target -Force}
+
+function Find-DshCmd {
+  if ($DshCmd) {
+    if (-not (Test-Path -LiteralPath $DshCmd)) { throw "找不到 DshCmd：$DshCmd" }
+    return (Resolve-Path -LiteralPath $DshCmd).Path
+  }
+  $command = Get-Command dsh -ErrorAction SilentlyContinue
+  if ($command) { return $command.Source }
+  foreach ($candidate in @(
+      'D:\agent\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd',
+      "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
+    )) {
+    if (Test-Path -LiteralPath $candidate) { return $candidate }
+  }
+  throw '找不到 dsh 命令。请用 -DshCmd 指定 dsh.cmd 的完整路径。'
 }
-Write-Host '已安装。请完全退出并重启 DSH。数据根目录：' $dataRoot
+
+function Update-ProfileManifest {
+  param([string]$ProfileDir, [string]$PackageName)
+  $manifestPath = Join-Path $ProfileDir 'package.json'
+  if (-not (Test-Path -LiteralPath $manifestPath)) {
+    throw "profile 清单不存在：$manifestPath（请先运行一次 dsh --profile $Profile）"
+  }
+  $script = @'
+const fs = require('fs');
+const [file, name] = process.argv.slice(1);
+const json = JSON.parse(fs.readFileSync(file, 'utf8'));
+json.dependencies ??= {};
+json.dsh ??= {};
+json.dsh.profile ??= {};
+json.dsh.profile.bundles ??= [];
+let changed = false;
+if (json.dependencies[name] === undefined) { changed = true; }
+if (!json.dsh.profile.bundles.includes(name)) {
+  json.dsh.profile.bundles.push(name);
+  changed = true;
+}
+if (changed) {
+  fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n', 'utf8');
+  console.log('updated');
+} else {
+  console.log('unchanged');
+}
+'@
+  $result = & node -e $script $manifestPath $PackageName
+  Write-Host "  profile 清单：$result"
+}
+
+function Add-WorkspaceOverride {
+  param([string]$ProfileDir, [string]$WorkspacePath)
+  $patchPath = Join-Path $ProfileDir 'cordis.patch.yml'
+  $existing = if (Test-Path -LiteralPath $patchPath) { Get-Content -LiteralPath $patchPath -Raw } else { '' }
+  if ($existing -match '(?m)^\s*-\s*id:\s*writer-workbench\s*$') {
+    Write-Host '  profile 覆盖行已存在，保留原配置（如需改 workspace 请手动编辑）。'
+    return
+  }
+  $escaped = $WorkspacePath.Replace("'", "''")
+  $block = @"
+
+# 码字工作台：profile 层覆盖 bundle 默认的 workspace（安装脚本写入）
+- id: writer-workbench
+  name: dsh-writer-workbench
+  config:
+    workspace: '$escaped'
+"@
+  Add-Content -LiteralPath $patchPath -Value $block -Encoding UTF8
+  Write-Host "  已写入 workspace 覆盖：$WorkspacePath"
+}
+
+Write-Host '码字工作台 · DSH 适配层安装'
+Write-Host "  插件目录：$packageRoot"
+Write-Host "  作品目录：$Workspace"
+Write-Host "  profile：$Profile"
+
+if (-not $SkipBuild) {
+  Write-Host '[1/5] 构建宿主与浏览器 bundle…'
+  Push-Location $packageRoot
+  try {
+    & node scripts/build.mjs
+    if ($LASTEXITCODE -ne 0) { throw '构建失败' }
+  } finally {
+    Pop-Location
+  }
+} else {
+  Write-Host '[1/5] 跳过构建'
+  if (-not (Test-Path -LiteralPath (Join-Path $packageRoot 'lib\index.js'))) {
+    throw 'lib/index.js 不存在，不能使用 -SkipBuild'
+  }
+}
+
+$resolvedDsh = Find-DshCmd
+Write-Host "[2/5] 安装到 profile（$resolvedDsh）…"
+& $resolvedDsh plugin --profile $Profile add $packageRoot
+if ($LASTEXITCODE -ne 0) { throw 'dsh plugin add 失败' }
+
+$profileDir = Join-Path (Join-Path $env:USERPROFILE '.dsh\profiles') $Profile
+if (-not (Test-Path -LiteralPath $profileDir)) {
+  throw "找不到 profile 目录：$profileDir"
+}
+
+Write-Host '[3/5] 确认 bundle 选择…'
+Update-ProfileManifest -ProfileDir $profileDir -PackageName 'dsh-writer-workbench'
+
+Write-Host '[4/5] 写入 profile 层 workspace…'
+Add-WorkspaceOverride -ProfileDir $profileDir -WorkspacePath $Workspace
+
+if (-not $SkipSkill) {
+  Write-Host '[5/5] 安装技能…'
+  $skillSource = Join-Path $packageRoot 'skills\writing-workbench'
+  $skillTarget = Join-Path (Join-Path $env:USERPROFILE '.dsh\skills') 'writing-workbench'
+  if (Test-Path -LiteralPath $skillSource) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $skillTarget) | Out-Null
+    if (Test-Path -LiteralPath $skillTarget) { Remove-Item -LiteralPath $skillTarget -Recurse -Force }
+    Copy-Item -LiteralPath $skillSource -Destination $skillTarget -Recurse -Force
+    Write-Host "  技能已安装：$skillTarget"
+  } else {
+    Write-Host '  技能目录不存在，跳过。'
+  }
+} else {
+  Write-Host '[5/5] 跳过技能'
+}
+
+Write-Host ''
+Write-Host '完成。请完全退出并重新启动 DSH 桌面应用，然后：'
+Write-Host '  - 点页面右侧的「✎ 码字工作台」；'
+Write-Host '  - 或在对话里说“打开码字工作台”（open_workbench）；'
+Write-Host '  - 说“检查码字工作台接入”验证（workbench_status）。'
+Write-Host '数据仍保存在：' (Join-Path $Workspace '码字工作台')

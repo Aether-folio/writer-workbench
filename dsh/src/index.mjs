@@ -3,7 +3,7 @@
  *
  * 只做三件事：
  *  1. 把 /writer-workbench 路由挂到 DSH webServer；
- *  2. 注册 open_workbench / workbench_status 两个模型可见工具；
+ *  2. 注册打开、状态检查和 AI 写作回传工具；
  *  3. 通过 context 里的 config.workspace 绑定作品目录。
  *
  * 真正的文件读写与打开状态在 runtime.mjs（可单测），本文件不碰业务逻辑。
@@ -13,6 +13,7 @@ import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createWorkbenchRuntime, STORAGE_FOLDER} from './runtime.mjs';
 import {tool} from './tool.mjs';
+import {resolveWorkspaceSetting} from '../../src/workspace-config.mjs';
 
 export const name = 'writer-workbench';
 export const inject = ['webServer', 'tools'];
@@ -31,9 +32,7 @@ function readVersion() {
 export const VERSION = readVersion();
 
 export function apply(ctx, config = {}) {
-  const workspacePath = typeof config?.workspace === 'string' && config.workspace.trim() !== ''
-    ? resolve(config.workspace)
-    : resolve(process.env.WORKBENCH_WORKSPACE || join(PACKAGE_ROOT, '..'));
+  const workspacePath = resolve(resolveWorkspaceSetting(config?.workspace));
   const editorPath = typeof config?.editorFile === 'string' && config.editorFile.trim() !== ''
     ? resolve(PACKAGE_ROOT, config.editorFile)
     : join(PACKAGE_ROOT, 'assets', 'editor.html');
@@ -59,6 +58,20 @@ export function apply(ctx, config = {}) {
 
   ctx.effect(() => {
     const disposers = [];
+    disposers.push(ctx.tools.register(tool({
+      name:'get_writing_request',
+      description:'收到【码字工作台 · AI 插入请求】后，按消息的文稿 path 与写作要求 instruction 读取隐藏的定位、上下文、上一版内容及 requestId/generation。草稿 path 为空。按要求生成纯正文并调用 publish_writing_suggestion 回传，段落间只用单个换行。不要向用户复述技术数据。',
+      parameters:{type:'object',properties:{path:{type:'string',maxLength:240},instruction:{type:'string',minLength:1,maxLength:4000}},required:['path','instruction'],additionalProperties:false},
+      output:{schema:{type:'object',properties:{requestId:{type:'string'},generation:{type:'integer'}},required:['requestId','generation']},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
+      execute:async(args,exec)=>{exec.signal.throwIfAborted();return runtime.callApi('get_writing_request',args);},
+    })));
+    disposers.push(ctx.tools.register(tool({
+      name:'publish_writing_suggestion',
+      description:'用户明确发起工作台 AI 插入或重生成后，先用 get_writing_request 读取上下文与 requestId/generation，再将纯正文 text 回传可编辑待采纳框。段落之间单换行，不加空白行。用户采纳后才合并，不直接改写文件。',
+      parameters:{type:'object',properties:{requestId:{type:'string',format:'uuid'},generation:{type:'integer',minimum:1},text:{type:'string',minLength:1,maxLength:100000}},required:['requestId','generation','text'],additionalProperties:false},
+      output:{schema:{type:'object',properties:{delivered:{type:'boolean'},requestId:{type:'string'},generation:{type:'integer'},message:{type:'string'}},required:['delivered','requestId','generation','message']},render:(_args,value)=>[{type:'text',text:value.message}]},
+      execute:async(args,exec)=>{exec.signal.throwIfAborted();return runtime.callApi('publish_writing_suggestion',args);},
+    })));
 
     disposers.push(ctx.tools.register(tool({
       name: 'open_workbench',

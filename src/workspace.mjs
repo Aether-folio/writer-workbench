@@ -3,6 +3,7 @@ import {constants} from 'node:fs';
 import {resolve,dirname,join,relative,isAbsolute,extname,basename} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
+import {createWritingStore} from './writing-suggestions.mjs';
 
 export const draftSchema=z.object({title:z.string().max(80),body:z.string().max(2000000)});
 export const defaultStatsFields=['work','cover','words','speed','active','idle','status'];
@@ -155,7 +156,7 @@ export function createWorkspace(workspacePath) {
     }
     return {fields:preferences.fields,coverDataUrl,pet:preferences.pet};
   }
-  return {
+  const api={
     root,init,scan,readDocument,
     async info() {
       await init();
@@ -163,7 +164,7 @@ export function createWorkspace(workspacePath) {
       const draft=draftSchema.parse(await readJSON('草稿',{title:'未命名草稿',body:''}));
       const tree=await scanTree(),paths=new Set(tree.directories.map(folder=>folder.path));
       const works=tree.directories.filter(folder=>!folder.path.includes('/') && paths.has(folder.path+'/设定') && paths.has(folder.path+'/正文'));
-      return {folder:'码字工作台',...tree,works,settings,draft,features:{trash:true,works:true,statsPreferences:true}};
+      return {folder:'码字工作台',...tree,works,settings,draft,features:{trash:true,works:true,statsPreferences:true,writingSuggestions:true,writingRequestContext:true}};
     },
     createWork(input) {return sequential(async()=>{
       const name=z.string().trim().min(1).max(80).parse(input.name);
@@ -308,4 +309,13 @@ export function createWorkspace(workspacePath) {
       return {month,records:document.records.filter(item=>item.day.startsWith(month+'-'))};
     },
   };
+  const writing=createWritingStore({checked,atomic,validatePath:documentPath,readDocument,saveDocument:input=>api.saveDocument(input),
+    readDraft:()=>readJSON('草稿',{title:'未命名草稿',body:''}),
+    commitDraft:(draft,expectedHash)=>sequential(async()=>{
+      const current=await readJSON('草稿',{title:'未命名草稿',body:''});
+      if(hash(current.body)!==expectedHash)throw new Error('草稿已改变，未覆盖。');
+      await writeJSON('草稿',draft);return draft;
+    }),
+  });
+  return {...api,createWritingRequest:writing.create,writingRequests:({path})=>writing.list(path),getWritingRequest:writing.context,updateWritingRequest:writing.update,publishWritingSuggestion:writing.publish};
 }

@@ -1,4 +1,4 @@
-const {chromium} = require('playwright');
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const {readFileSync,mkdirSync,writeFileSync} = require('node:fs');
 const {resolve} = require('node:path');
 const assert = require('node:assert/strict');
@@ -6,8 +6,9 @@ const assert = require('node:assert/strict');
 const html=readFileSync(resolve(__dirname,'../dist/editor.html'),'utf8');
 const report={testHost:true,realCodexHost:false,checks:[]};
 
-async function fixture(browser,messageEnabled,displayOptions={}) {
+async function fixture(browser,messageEnabled,displayOptions={},testApi) {
   const page=await browser.newPage({viewport:{width:1180,height:900}});
+  if(testApi)await page.exposeFunction('workbenchTestApi',testApi);
   const errors=[];
   page.setDefaultTimeout(10000);
   page.on('pageerror',error=>errors.push(error.message));
@@ -37,7 +38,7 @@ async function fixture(browser,messageEnabled,displayOptions={}) {
     window.testRecords={};
     let revisionCounter=1;
     const frame=document.getElementById('app');
-    window.addEventListener('message',event=>{
+    window.addEventListener('message',async event=>{
       if(event.source!==frame.contentWindow) return;
       const request=event.data;
       if(request?.method) window.testRequests.push(request.method);
@@ -54,7 +55,11 @@ async function fixture(browser,messageEnabled,displayOptions={}) {
       } else if(request.method==='tools/call') {
         const args=request.params.arguments;
         window.testTools.push(request.params.name);
-        if(request.params.name==='workspace_info') {
+        if(window.workbenchTestApi) {
+          try {result={content:[],structuredContent:await window.workbenchTestApi(request.params.name,args)};}
+          catch(error){result={isError:true,content:[{type:'text',text:error.message}]};}
+        }
+        else if(request.params.name==='workspace_info') {
           const directories=new Set(window.testDirectories);
           for(const path of Object.keys(window.testFiles)){const parts=path.split('/');for(let i=1;i<parts.length;i++)directories.add(parts.slice(0,i).join('/'));}
           result={content:[],structuredContent:{folder:'码字工作台',features:{trash:true,works:true,statsPreferences:true},works:window.testWorks,directories:[...directories].map(path=>({path,name:path.split('/').at(-1)})),files:Object.values(window.testFiles).map(file=>({path:file.path,name:file.path.split('/').at(-1)})),settings:window.testSettings,draft:window.testDraft}};
@@ -154,16 +159,18 @@ if(require.main===module) (async()=>{
     const selected=await editor.evaluate(el=>el.value.slice(el.selectionStart,el.selectionEnd));
     await editor.dispatchEvent('contextmenu',{clientX:240,clientY:270,bubbles:true,cancelable:true});
     await frame.locator('#menu-quote').click();
-    await frame.locator('#feedback').filter({hasText:'选区已添加'}).waitFor();
+    await frame.locator('#quote-chat-instruction').fill('分析一下这段内容。');
+    await frame.locator('#quote-chat-send').click();
+    await frame.locator('#feedback').filter({hasText:'选区和对话内容已发送'}).waitFor();
     const state=await page.evaluate(()=>({messages:window.testMessages,draft:window.existingDraft,submitted:window.submitted}));
     assert.equal(state.messages.length,1);
-    assert.equal(state.submitted,0);
+    assert.equal(state.submitted,1);
     assert.ok(state.draft.startsWith('我已有的问题。'));
     assert.ok(state.messages[0].params.content[0].text.includes(selected));
     assert.ok(!state.messages[0].params.content[0].text.includes('第一段正文'));
-    assert.deepEqual(state.messages[0].params._meta,{'openai/message':{target:'active',send:false}});
+    assert.deepEqual(state.messages[0].params._meta,{'openai/message':{target:'active',send:true}});
     assert.equal(await editor.evaluate(el=>el.value),original);
-    report.checks.push('right-click selection adds only selection; active/send:false; existing draft and manuscript unchanged');
+    report.checks.push('right-click selection opens the workbench composer; quote and instruction send directly; existing draft and manuscript unchanged');
     await page.clock.runFor(45000);
     assert.equal(await frame.locator('#active-time').textContent(),'00:00:05');
     assert.equal(await frame.locator('#idle-time').textContent(),'00:00:40');
@@ -199,18 +206,18 @@ if(require.main===module) (async()=>{
     assert.equal(await page.evaluate(()=>window.testTools.some(name=>['list_annotations','save_annotation'].includes(name))),false);
     await page.evaluate(()=>{window.testMessageError=true;});
     await frame.locator('#annotations-to-chat').click();
-    await frame.locator('#annotation-chat-status').filter({hasText:'添加未完成'}).waitFor();
+    await frame.locator('#annotation-chat-status').filter({hasText:'发送未完成'}).waitFor();
     assert.equal(await frame.locator('.annotation-card').count(),1);
     assert.equal(await frame.locator('#annotations-to-chat').isEnabled(),true);
     await page.evaluate(()=>{window.testMessageError=false;});
     await frame.locator('#annotations-to-chat').click();
-    await frame.locator('#annotation-chat-status').filter({hasText:'已将 1 条批注添加'}).waitFor();
+    await frame.locator('#annotation-chat-status').filter({hasText:'已发送 1 条批注'}).waitFor();
     const batch=await page.evaluate(()=>({messages:window.testMessages,draft:window.existingDraft,submitted:window.submitted}));
-    assert.equal(batch.messages.length,2);assert.equal(batch.submitted,0);
+    assert.equal(batch.messages.length,2);assert.equal(batch.submitted,2);
     assert.ok(batch.draft.startsWith('我已有的问题。'));
     assert.ok(batch.messages[1].params.content[0].text.includes('修改后：在上一段埋好伏笔。'));
     assert.ok(batch.messages[1].params.content[0].text.includes(selected));
-    assert.deepEqual(batch.messages[1].params._meta,{'openai/message':{target:'active',send:false}});
+    assert.deepEqual(batch.messages[1].params._meta,{'openai/message':{target:'active',send:true}});
     assert.equal(await editor.evaluate(el=>el.value),original);
     assert.equal(await frame.locator('.annotation-card').count(),0);
     assert.equal(await frame.locator('#annotation-count').textContent(),'0 条');
@@ -227,7 +234,7 @@ if(require.main===module) (async()=>{
     await annotate('添加过程中新增的批注');
     assert.equal(await page.evaluate(()=>window.testMessageReplies.length),1);
     await page.evaluate(()=>{window.testHoldMessages=false;window.testMessageReplies.splice(0).forEach(reply=>reply());});
-    await frame.locator('#annotation-chat-status').filter({hasText:'已将 1 条批注添加'}).waitFor();
+    await frame.locator('#annotation-chat-status').filter({hasText:'已发送 1 条批注'}).waitFor();
     assert.equal(await frame.locator('.annotation-card').count(),2);
     assert.ok((await frame.locator('#annotation-list').textContent()).includes('添加过程中修改的新版本'));
     await page.locator('#app').evaluate(el=>{el.srcdoc=el.srcdoc;});
@@ -237,7 +244,7 @@ if(require.main===module) (async()=>{
     assert.equal(await frame.locator('.annotation-card').count(),0);
     assert.equal(await frame.locator('#annotations-to-chat').isDisabled(),true);
     await editor.fill(original);
-    report.checks.push('annotations stay in memory; edit/cancel/empty validation; batch adds quote and comment to active draft; failure retains records; no disk tools; reload clears records');
+    report.checks.push('annotations stay in memory; edit/cancel/empty validation; batch sends quotes and comments directly; failure retains records; no disk tools; reload clears records');
     await frame.locator('#stats-hide').click();
     await frame.locator('#document-save').click();
     await frame.locator('#document-name').fill('新章节.md');
@@ -398,36 +405,36 @@ if(require.main===module) (async()=>{
     assert.equal(await wp.evaluate(()=>window.testWorks.length),0);
     await wf.locator('#new-work').click();await wf.locator('#work-name').fill('../越界');await wf.locator('#work-create').click();
     await wf.locator('#work-error').filter({hasText:'不要包含路径'}).waitFor();
-    await wf.locator('#work-name').fill('示例长篇');await wf.locator('#work-create').click();
+    await wf.locator('#work-name').fill('星河写作计划');await wf.locator('#work-create').click();
     await wf.locator('#work-dialog').waitFor({state:'hidden'});
     assert.equal(await wp.evaluate(()=>Object.keys(window.testFiles).length),1);
-    assert.equal(await wf.locator('.file-folder[data-path="示例长篇/设定"]').isVisible(),true);
-    assert.equal(await wf.locator('.file-folder[data-path="示例长篇/正文"]').isVisible(),true);
-    await wf.getByRole('button',{name:'在 示例长篇/正文 新建文稿',exact:true}).click();
-    assert.equal(await wf.locator('#document-folder').inputValue(),'示例长篇/正文');
+    assert.equal(await wf.locator('.file-folder[data-path="星河写作计划/设定"]').isVisible(),true);
+    assert.equal(await wf.locator('.file-folder[data-path="星河写作计划/正文"]').isVisible(),true);
+    await wf.getByRole('button',{name:'在 星河写作计划/正文 新建文稿',exact:true}).click();
+    assert.equal(await wf.locator('#document-folder').inputValue(),'星河写作计划/正文');
     await wf.locator('#document-name').fill('第一章.md');await wf.locator('#document-create').click();
-    await wf.locator('#document-status').filter({hasText:'示例长篇/正文/第一章.md'}).waitFor();
-    await wf.locator('#stats-work').filter({hasText:'《示例长篇》'}).waitFor();
+    await wf.locator('#document-status').filter({hasText:'星河写作计划/正文/第一章.md'}).waitFor();
+    await wf.locator('#stats-work').filter({hasText:'《星河写作计划》'}).waitFor();
     await we.fill('用于界面检查的章节文字。');await wp.clock.runFor(1600);
     await wf.locator('#document-status').filter({hasText:'已自动保存'}).waitFor();
-    await wf.getByRole('button',{name:'在 示例长篇/设定 新建文稿',exact:true}).click();
-    assert.equal(await wf.locator('#document-folder').inputValue(),'示例长篇/设定');
+    await wf.getByRole('button',{name:'在 星河写作计划/设定 新建文稿',exact:true}).click();
+    assert.equal(await wf.locator('#document-folder').inputValue(),'星河写作计划/设定');
     await wf.locator('#document-name').fill('人物设定.md');await wf.locator('#document-create').click();
-    await wf.locator('#document-status').filter({hasText:'示例长篇/设定/人物设定.md'}).waitFor();
-    assert.equal(await wp.evaluate(()=>window.testFiles['示例长篇/正文/第一章.md'].body),'用于界面检查的章节文字。');
+    await wf.locator('#document-status').filter({hasText:'星河写作计划/设定/人物设定.md'}).waitFor();
+    assert.equal(await wp.evaluate(()=>window.testFiles['星河写作计划/正文/第一章.md'].body),'用于界面检查的章节文字。');
     const png=await wp.evaluate(()=>{
       const canvas=document.createElement('canvas');canvas.width=300;canvas.height=400;const ctx=canvas.getContext('2d');
       const gradient=ctx.createLinearGradient(0,0,300,400);gradient.addColorStop(0,'#3c6174');gradient.addColorStop(1,'#1c3547');ctx.fillStyle=gradient;ctx.fillRect(0,0,300,400);
-      ctx.strokeStyle='#afc6bc';ctx.strokeRect(24,24,252,352);ctx.fillStyle='#eff1d9';ctx.font='18px serif';ctx.fillText('创作手记',50,70);ctx.font='bold 34px serif';ctx.fillText('示例作品',50,165);ctx.fillText('示例',50,215);ctx.fillRect(50,300,35,2);return canvas.toDataURL('image/png');
+      ctx.strokeStyle='#afc6bc';ctx.strokeRect(24,24,252,352);ctx.fillStyle='#eff1d9';ctx.font='18px serif';ctx.fillText('创作手记',50,70);ctx.font='bold 34px serif';ctx.fillText('星河写作',50,165);ctx.fillText('计划',50,215);ctx.fillRect(50,300,35,2);return canvas.toDataURL('image/png');
     });
     // 封面改在书架上右键更换
     await wf.locator('#shelf-home').click();
     await wf.locator('#shelf-page').waitFor({state:'visible'});
-    await wf.locator('.shelf-book[data-path="示例长篇"]').click({button:'right'});
+    await wf.locator('.shelf-book[data-path="星河写作计划"]').click({button:'right'});
     await wf.locator('#shelf-menu button[data-action="cover"]').click();
     await wf.locator('#shelf-cover-file').setInputFiles({name:'测试封面.png',mimeType:'image/png',buffer:Buffer.from(png.split(',')[1],'base64')});
     await wf.locator('#shelf-status').filter({hasText:'封面已更新'}).waitFor();
-    await wf.locator('.shelf-book[data-path="示例长篇"]').click();
+    await wf.locator('.shelf-book[data-path="星河写作计划"]').click();
     await wf.locator('#editor-page').waitFor({state:'visible'});
     assert.equal(await wf.locator('#stats-cover-image').getAttribute('src'),png);
     await wf.locator('#stats-settings').click();
@@ -468,14 +475,14 @@ if(require.main===module) (async()=>{
     await wf.locator('#stats-settings-save').click();await wf.locator('#stats-settings-dialog').waitFor({state:'hidden'});
     await wf.locator('#new-work').click();await wf.locator('#work-name').fill('《第二部作品》');await wf.locator('#work-create').click();
     await wf.locator('#work-dialog').waitFor({state:'hidden'});
-    assert.equal(await wf.locator('#stats-work').textContent(),'《示例长篇》');
+    assert.equal(await wf.locator('#stats-work').textContent(),'《星河写作计划》');
     await wf.getByRole('button',{name:'在 《第二部作品》/正文 新建文稿',exact:true}).click();
     await wf.locator('#document-name').fill('开篇.md');await wf.locator('#document-create').click();
     await wf.locator('#document-status').filter({hasText:'《第二部作品》/正文/开篇.md'}).waitFor();
     assert.equal(await wf.locator('#stats-work').textContent(),'《第二部作品》');
     assert.equal(await wf.locator('#stats-cover-image').isVisible(),false);
     await wf.locator('.file-entry').filter({hasText:'第一章.md'}).click();
-    await wf.locator('#document-status').filter({hasText:'示例长篇/正文/第一章.md'}).waitFor();
+    await wf.locator('#document-status').filter({hasText:'星河写作计划/正文/第一章.md'}).waitFor();
     await wf.locator('#stats-cover-image').waitFor({state:'visible'});
     assert.equal(await wf.locator('#stats-cover-image').getAttribute('src'),png);
     await wf.locator('#sidebar-toggle').click();

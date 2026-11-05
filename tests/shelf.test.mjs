@@ -87,3 +87,4 @@ test('封面标题字号随书名长度收敛', () => {
   assert.equal(workTitleSize('这是一个特别特别特别长的书名'), 11);
   assert.ok(workHue('空作品') !== workHue('第二部作品'));
 });
+

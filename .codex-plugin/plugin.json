@@ -1,7 +1,7 @@
 {
   "name": "writer-workbench",
-  "version": "0.3.0",
-  "description": "Codex内的本地写作工作台：文稿文件侧栏、自动保存、批注、码字日历和自定义背景。",
+  "version": "0.4.3",
+  "description": "Codex内的本地写作工作台：文稿编辑、自动保存、AI 定点插入与待采纳框、批注重生成和码字日历。",
   "author": { "name": "Local Writing Tools" },
   "license": "MIT",
   "skills": "./skills/",
@@ -9,8 +9,8 @@
   "requires_local_executor": true,
   "interface": {
     "displayName": "码字工作台",
-    "shortDescription": "文稿编辑、码字日历与选区批注",
-    "longDescription": "在工作区的码字工作台文件夹管理和编辑文稿，自动保存并保留覆盖前备份。支持选区聊天草稿引用、可修改的批注记录、每日码字日历、六种背景和自定义颜色。正文默认1.5倍间距。",
+    "shortDescription": "文稿编辑、AI 插入与批注重生成",
+    "longDescription": "在工作区的码字工作台文件夹管理和编辑文稿，自动保存并保留覆盖前备份。可在光标处请求 AI 写作，返回与正文格式一致的可编辑文本框，支持采纳、批注重生成或不采纳。还支持选区聊天引用、批注、码字日历、背景和萌宠。正文默认1.5倍间距。",
     "developerName": "Local Writing Tools",
     "category": "Productivity",
     "capabilities": ["Interactive"],

@@ -1,17 +1,19 @@
 {
   "name": "writer-workbench",
-  "version": "0.3.0",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build-all.mjs",
-    "test": "node --test tests/core.test.mjs tests/annotations.test.mjs tests/workspace.test.mjs tests/server.test.mjs tests/sidebar.test.mjs tests/shelf.test.mjs",
+    "test": "node --test tests/core.test.mjs tests/annotations.test.mjs tests/workspace.test.mjs tests/server.test.mjs tests/sidebar.test.mjs tests/shelf.test.mjs tests/writing-suggestions.test.mjs tests/workspace-config.test.mjs",
     "build:core": "node scripts/build.mjs",
     "test:dsh": "node --test dsh/tests/*.test.mjs",
     "test:browser": "node tests/browser.cjs",
     "test:focus": "node tests/trash-focus.browser.cjs",
     "privacy:check": "node scripts/check-public-files.mjs",
-    "test:shelf": "node tests/shelf.browser.cjs"
+    "test:shelf": "node tests/shelf.browser.cjs",
+    "test:chat": "node tests/chat-actions.browser.cjs",
+    "test:writing": "node tests/writing-suggestions.browser.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",

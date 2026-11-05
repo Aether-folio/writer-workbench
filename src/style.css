@@ -41,6 +41,18 @@ h2 {font-size:14px;font-weight:600}
 #draft-body[data-inline-start="true"]>div,#draft-body[data-inline-start="true"]>p {margin-top:var(--paragraph-gap)}
 #draft-body:empty::before,#draft-body:has(>br:only-child)::before,#draft-body:has(>div:only-child>br:only-child)::before {content:attr(data-placeholder);color:var(--muted);pointer-events:none;position:absolute}
 #work-name::placeholder {color:light-dark(#808080,#a6a6a6);opacity:1}
+.ai-suggestion {display:inline-flex;vertical-align:baseline;flex-direction:column;max-width:100%;min-width:min(100%,280px);padding:10px 12px;margin:5px 2px;border:1px solid var(--blue);border-radius:8px;background:color-mix(in srgb,var(--blue-soft) 18%,transparent);font:inherit;line-height:inherit;color:inherit;white-space:normal;box-decoration-break:clone}
+.ai-suggestion-status {font:12px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;color:var(--blue);margin-bottom:6px;user-select:none;white-space:normal}
+.ai-suggestion-body {display:block;min-width:0;min-height:1.5em;white-space:pre-wrap;overflow-wrap:anywhere;outline:none;font:inherit;line-height:inherit}
+.ai-suggestion-body:focus {outline:1px dashed var(--blue);outline-offset:3px}
+.ai-suggestion-actions {display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:6px;margin-top:10px;user-select:none;white-space:normal}
+.ai-suggestion-actions button {font:12px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;padding:4px 8px;border-radius:5px}
+.ai-suggestion-actions button.primary {width:auto}
+#ai-writing-dialog,#quote-chat-dialog {width:min(560px,calc(100vw - 24px))}
+#ai-writing-dialog textarea,#quote-chat-dialog textarea {display:block;width:100%;margin-top:8px;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--paper);resize:vertical}
+#ai-writing-context,#quote-chat-selection {max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin:14px 0;padding:10px;border-left:3px solid var(--blue);font-size:14px;line-height:1.6}
+#ai-writing-status:empty {display:none}
+@media(max-width:600px){.document-header{flex-wrap:wrap}.document-header #draft-title{flex-basis:50%}.ai-suggestion{padding:8px;min-width:0}.ai-suggestion-actions{gap:4px}}
 .document-footer {justify-content:flex-start;flex-wrap:wrap;padding:13px 22px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);background:color-mix(in srgb,var(--blue-soft) 15%,var(--paper))}
 .document-footer #document-save {background:var(--blue);color:light-dark(#fff,#14213a);border-color:transparent}
 .document-footer>span {flex-basis:100%;min-width:0}
