@@ -1,5 +1,5 @@
-/**
- * 码字工作台 · DSH 宿主半侧（Cordis 插件）
+﻿/**
+ * 递笔工作台 · DSH 宿主半侧（Cordis 插件）
  *
  * 只做三件事：
  *  1. 把 /writer-workbench 路由挂到 DSH webServer；
@@ -60,15 +60,15 @@ export function apply(ctx, config = {}) {
     const disposers = [];
     disposers.push(ctx.tools.register(tool({
       name:'get_writing_request',
-      description:'收到【码字工作台 · AI 插入请求】后，按消息的文稿 path 与写作要求 instruction 读取隐藏的定位、上下文、上一版内容及 requestId/generation。草稿 path 为空。按要求生成纯正文并调用 publish_writing_suggestion 回传，段落间只用单个换行。不要向用户复述技术数据。',
+      description:'收到【递笔工作台 · 递笔】、旧标题「【码字工作台 · 递笔】」或旧 AI 插入消息后，逐项按 path/instruction 读取隐藏的定位、选区、资料、上一版及 requestId/generation。若返回 requests 数组须逐项按各自 ID/轮次处理，不合并目标。仅讨论用 mode=discussion 回传并正常回答；明确补写用 insert；明确改写选区用 replace。用户采纳后才改正文，段落单换行。',
       parameters:{type:'object',properties:{path:{type:'string',maxLength:240},instruction:{type:'string',minLength:1,maxLength:4000}},required:['path','instruction'],additionalProperties:false},
-      output:{schema:{type:'object',properties:{requestId:{type:'string'},generation:{type:'integer'}},required:['requestId','generation']},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
+      output:{schema:{type:'object',properties:{requestId:{type:'string'},generation:{type:'integer'},requests:{type:'array',items:{type:'object'}}},required:[]},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
       execute:async(args,exec)=>{exec.signal.throwIfAborted();return runtime.callApi('get_writing_request',args);},
     })));
     disposers.push(ctx.tools.register(tool({
       name:'publish_writing_suggestion',
-      description:'用户明确发起工作台 AI 插入或重生成后，先用 get_writing_request 读取上下文与 requestId/generation，再将纯正文 text 回传可编辑待采纳框。段落之间单换行，不加空白行。用户采纳后才合并，不直接改写文件。',
-      parameters:{type:'object',properties:{requestId:{type:'string',format:'uuid'},generation:{type:'integer',minimum:1},text:{type:'string',minLength:1,maxLength:100000}},required:['requestId','generation','text'],additionalProperties:false},
+      description:'读取递笔定位后回传：mode=discussion 仅讨论；insert 在光标或选区末尾补写；replace 改写选区。按用户明确意图选择，不擅自改稿，正文建议经用户采纳后保存。',
+      parameters:{type:'object',properties:{requestId:{type:'string',format:'uuid'},generation:{type:'integer',minimum:1},text:{type:'string',minLength:1,maxLength:100000},mode:{type:'string',enum:['discussion','insert','replace']}},required:['requestId','generation','text'],additionalProperties:false},
       output:{schema:{type:'object',properties:{delivered:{type:'boolean'},requestId:{type:'string'},generation:{type:'integer'},message:{type:'string'}},required:['delivered','requestId','generation','message']},render:(_args,value)=>[{type:'text',text:value.message}]},
       execute:async(args,exec)=>{exec.signal.throwIfAborted();return runtime.callApi('publish_writing_suggestion',args);},
     })));
@@ -76,9 +76,9 @@ export function apply(ctx, config = {}) {
     disposers.push(ctx.tools.register(tool({
       name: 'open_workbench',
       description:
-        '在 DeepSeek Harness 中打开「码字工作台」：稿件侧栏与自动保存、选区批注、每日码字日历、'
-        + '背景设置和码字悬浮窗。工作台只读写作品目录下的「码字工作台」文件夹，不会改动原有正文。'
-        + '打开后会在页面右侧栏新增「码字工作台」标签页，不会遮住对话；用户说“打开码字工作台/写作工作台”时调用本工具。',
+        '在 DeepSeek Harness 中打开「递笔工作台」：稿件侧栏与自动保存、递笔、持久批注、原位对照和备份恢复、每日码字日历、'
+        + '背景设置和码字统计。工作台只读写作品目录下的「码字工作台」文件夹，不会改动原有正文。'
+        + '打开后会在页面右侧栏新增「递笔工作台」标签页，不会遮住对话；用户说“打开递笔工作台/码字工作台/写作工作台”时调用本工具。',
       parameters: {type: 'object', properties: {}, additionalProperties: false},
       output: {
         schema: {
@@ -104,8 +104,8 @@ export function apply(ctx, config = {}) {
           delivered,
           storageFolder: STORAGE_FOLDER,
           message: delivered
-            ? '码字工作台正在打开。数据保存在作品目录的「码字工作台」文件夹。'
-            : '已登记打开请求；页面在线后会自动打开码字工作台。',
+            ? '递笔工作台正在打开。数据保存在作品目录的「码字工作台」文件夹。'
+            : '已登记打开请求；页面在线后会自动打开递笔工作台。',
         };
       },
     })));
@@ -113,7 +113,7 @@ export function apply(ctx, config = {}) {
     disposers.push(ctx.tools.register(tool({
       name: 'workbench_status',
       description:
-        '检查码字工作台在 DeepSeek Harness 中的接入状态：版本、绑定的作品目录、数据文件夹、'
+        '检查递笔工作台在 DeepSeek Harness 中的接入状态：版本、绑定的作品目录、数据文件夹、'
         + '编辑器资源是否存在、页面是否在线，以及工作台里现有的作品和文稿数量。'
         + '不修改任何文件。',
       parameters: {type: 'object', properties: {}, additionalProperties: false},
@@ -155,7 +155,7 @@ export function apply(ctx, config = {}) {
         const online = runtime.clientOnline();
         const workNames = works.map(work => String(work?.name ?? '')).filter(Boolean).join('、');
         const message = [
-          `码字工作台 ${VERSION}`,
+          `递笔工作台 ${VERSION}`,
           `作品目录：${workspacePath}`,
           `数据目录：${dataFolder}`,
           `编辑器资源：${editorReady ? '就绪' : '缺失（请重新构建插件）'}`,

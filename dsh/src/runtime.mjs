@@ -1,5 +1,5 @@
 /**
- * 码字工作台 · DSH 宿主运行时（与 Cordis / MCP 无关，可直接单测）
+ * 递笔工作台 · DSH 宿主运行时（与 Cordis / MCP 无关，可直接单测）
  *
  * 职责：
  *  - 复用 Codex 插件的 src/workspace.mjs，把同一套 workspace_* 工具暴露成
@@ -37,6 +37,13 @@ function createApi(workspace) {
     get_writing_request: input => workspace.getWritingRequest(input),
     update_writing_request: input => workspace.updateWritingRequest(input),
     publish_writing_suggestion: input => workspace.publishWritingSuggestion(input),
+    writing_version: input => workspace.writingVersion(input),
+    list_backups: input => workspace.listBackups(input),
+    read_backup: input => workspace.readBackup(input),
+    restore_backup: input => workspace.restoreBackup(input),
+    prune_backups: input => workspace.pruneBackups(input),
+    reading_position: input => workspace.readingPosition(input),
+    search_documents: input => workspace.searchDocuments(input),
     create_work: input => workspace.createWork(input),
     stats_preferences: input => workspace.statsPreferences(input ?? {}),
     save_stats_preferences: input => workspace.saveStatsPreferences(input),
@@ -132,10 +139,10 @@ export function createWorkbenchRuntime({
   routePrefix = '/writer-workbench',
 } = {}) {
   if (typeof workspacePath !== 'string' || workspacePath.trim() === '') {
-    throw new Error('码字工作台缺少 workspace 配置。');
+    throw new Error('递笔工作台缺少 workspace 配置。');
   }
   if (typeof editorPath !== 'string' || editorPath.trim() === '') {
-    throw new Error('码字工作台缺少 editorPath 配置。');
+    throw new Error('递笔工作台缺少 editorPath 配置。');
   }
   const workspace = createWorkspace(workspacePath);
   const api = createApi(workspace);
@@ -180,7 +187,7 @@ export function createWorkbenchRuntime({
 
   function editorError(cause) {
     const wrapped = new Error(
-      `码字工作台编辑器资源缺失：${editorPath}。请先在插件目录运行 npm run build。`,
+      `递笔工作台编辑器资源缺失：${editorPath}。请先在插件目录运行 npm run build。`,
       {cause},
     );
     wrapped.status = 500;

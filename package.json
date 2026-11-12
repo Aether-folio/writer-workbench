@@ -1,19 +1,20 @@
 {
   "name": "writer-workbench",
-  "version": "0.4.3",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "node scripts/build-all.mjs",
-    "test": "node --test tests/core.test.mjs tests/annotations.test.mjs tests/workspace.test.mjs tests/server.test.mjs tests/sidebar.test.mjs tests/shelf.test.mjs tests/writing-suggestions.test.mjs tests/workspace-config.test.mjs",
+    "test": "node --test tests/core.test.mjs tests/annotations.test.mjs tests/workspace.test.mjs tests/server.test.mjs tests/sidebar.test.mjs tests/shelf.test.mjs tests/writing-suggestions.test.mjs tests/workspace-config.test.mjs tests/pen-store.test.mjs tests/scale.test.mjs",
     "build:core": "node scripts/build.mjs",
     "test:dsh": "node --test dsh/tests/*.test.mjs",
-    "test:browser": "node tests/browser.cjs",
+    "test:browser": "node tests/themes.browser.cjs && node tests/pen.browser.cjs && node tests/pen-interactions.browser.cjs && node tests/pen-layout.browser.cjs && node tests/paragraph-editor.browser.cjs && node tests/shelf.browser.cjs && node tests/ui-controls.browser.cjs && node tests/refresh-document.browser.cjs && node tests/chat-edits.browser.cjs && node tests/docked-stats.browser.cjs && node tests/trash-focus.browser.cjs && node tests/dsh-pen.browser.cjs",
+    "test:themes": "node tests/themes.browser.cjs",
     "test:focus": "node tests/trash-focus.browser.cjs",
     "privacy:check": "node scripts/check-public-files.mjs",
     "test:shelf": "node tests/shelf.browser.cjs",
-    "test:chat": "node tests/chat-actions.browser.cjs",
-    "test:writing": "node tests/writing-suggestions.browser.cjs"
+    "test:chat": "node tests/pen-interactions.browser.cjs",
+    "test:writing": "node tests/pen.browser.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "1.7.5",
@@ -26,7 +27,7 @@
     "esbuild": "0.25.12",
     "playwright": "1.64.1"
   },
-  "description": "本地码字工作台：Codex 插件与 DeepSeek Harness 适配层。",
+  "description": "本地递笔工作台：Codex 插件与 DeepSeek Harness 适配层。",
   "license": "MIT",
   "author": "Local Writing Tools",
   "engines": {

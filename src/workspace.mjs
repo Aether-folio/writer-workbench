@@ -4,6 +4,8 @@ import {resolve,dirname,join,relative,isAbsolute,extname,basename} from 'node:pa
 import {createHash,randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {createWritingStore} from './writing-suggestions.mjs';
+import {createWorkspaceHistory} from './workspace-history.mjs';
+import {MAX_COVER_BYTES} from './shelf-cover.mjs';
 
 export const draftSchema=z.object({title:z.string().max(80),body:z.string().max(2000000)});
 export const defaultStatsFields=['work','cover','words','speed','active','idle','status'];
@@ -14,7 +16,7 @@ export const statsPreferencesSchema=z.object({fields:statsFieldsSchema,workPath:
 const coverTypes={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'};
 const storedStatsSchema=z.object({version:z.literal(1),fields:statsFieldsSchema,covers:z.record(z.string(),z.object({id:z.string().uuid(),mime:z.enum(['image/png','image/jpeg','image/webp'])})),pet:petSchema.default(defaultPet)});
 export const recordSchema=z.object({id:z.string().min(1).max(100),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),path:z.string().max(240),title:z.string().max(80),added:z.number().int().min(0).max(10000000),deleted:z.number().int().min(0).max(10000000),activeMs:z.number().min(0).max(86400000),idleMs:z.number().min(0).max(86400000),startedAt:z.string().datetime(),updatedAt:z.string().datetime()});
-const settingsSchema=z.object({background:z.string().regex(/^#[0-9a-f]{6}$/i)});
+export const settingsSchema=z.object({theme:z.enum(['native','glass']).default('native'),glassPalette:z.enum(['glacier','iris','mint','peach','silver','midnight']).default('glacier'),glassFrost:z.number().min(40).max(90).default(70),background:z.string().regex(/^#[0-9a-f]{6}$/i),fontSize:z.number().min(14).max(30).default(18),lineHeight:z.number().min(1.2).max(2.4).default(1.6),paragraphGap:z.number().min(.5).max(3).default(1.3),pageWidth:z.number().min(600).max(1600).default(1100),autoPageWidth:z.boolean().optional(),reduceMotion:z.boolean().default(false),sidebarSide:z.enum(['left','right']).default('left')});
 const trashSchema=z.object({id:z.string().uuid(),path:z.string().max(240),deletedAt:z.string().datetime(),revision:z.string().regex(/^[a-f0-9]{64}$/),restoredAt:z.string().datetime().optional()});
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const missing=error=>error.code==='ENOENT';
@@ -22,6 +24,7 @@ const missing=error=>error.code==='ENOENT';
 export function createWorkspace(workspacePath) {
   const root=resolve(workspacePath,'码字工作台');
   let pending=Promise.resolve();
+  let recovering=null;
   function sequential(task) {const next=pending.then(task);pending=next.then(()=>{},()=>{});return next;}
   async function checked(path) {
     const target=resolve(root,path);
@@ -39,6 +42,8 @@ export function createWorkspace(workspacePath) {
   async function init() {
     await checked('');await mkdir(root,{recursive:true});
     for(const folder of ['数据','数据/备份']) {await mkdir(await checked(folder),{recursive:true});}
+    if(!recovering)recovering=recoverRenames();
+    await recovering;
   }
   async function readJSON(name,fallback) {
     try {return JSON.parse(await readFile(await checked(`数据/${name}.json`),'utf8'));}
@@ -52,6 +57,9 @@ export function createWorkspace(workspacePath) {
     finally {await unlink(temp).catch(()=>{});}
   }
   const writeJSON=(name,value)=>atomic(`数据/${name}.json`,JSON.stringify(value,null,2));
+  async function recoverRenames(){let files=[];try{files=await readdir(await checked('数据/改名记录'));}catch(e){if(!missing(e))throw e;}for(const file of files){if(!/^[a-f0-9-]{36}\.json$/.test(file))continue;const record=JSON.parse(await readFile(await checked('数据/改名记录/'+file),'utf8'));folderPath(record.from);folderPath(record.to);let moved=false;try{await lstat(await checked(record.to));try{await lstat(await checked(record.from));}catch(e){if(missing(e))moved=true;else throw e;}}catch(e){if(!missing(e))throw e;}if(moved){await writing.migratePaths(record.from,record.to);await history.migratePaths(record.from,record.to);if(!record.from.includes('/'))await migrateCover(record.from,record.to);}await unlink(await checked('数据/改名记录/'+file));}}
+  async function renameLinked(from,to){const key=randomUUID(),journal=`数据/改名记录/${key}.json`;await atomic(journal,JSON.stringify({from,to}));await rename(await checked(from),await checked(to));try{await writing.migratePaths(from,to);await history.migratePaths(from,to);const aliases=await readJSON('路径别名',{});aliases[from]=to;await writeJSON('路径别名',aliases);await unlink(await checked(journal));}catch(error){recovering=null;throw new Error('文件已改名，关联记录迁移未完成；重新打开工作台会继续恢复。'+error.message);}}
+  async function resolveDocumentAlias(path){let current=path;try{await lstat(await checked(path));return path;}catch(e){if(!missing(e))throw e;}const aliases=await readJSON('路径别名',{});for(let i=0;i<20;i++){const key=Object.keys(aliases).sort((a,b)=>b.length-a.length).find(k=>current===k||current.startsWith(k+'/'));if(!key)break;current=aliases[key]+current.slice(key.length);}return current;}
   function documentPath(path) {
     if(typeof path!=='string' || path.length>240 || !path || isAbsolute(path) || /[<>:"|?*\x00-\x1f]/.test(path)) throw new Error('文稿路径不正确。');
     const parts=path.replace(/\\/g,'/').split('/');
@@ -88,16 +96,14 @@ export function createWorkspace(workspacePath) {
   async function scanTree() {
     const files=[],directories=[];
     async function visit(folder,depth=0) {
-      if(depth>6 || files.length>=1000 || directories.length>=1000) return;
+      if(depth>6) return;
       for(const entry of await readdir(await checked(folder),{withFileTypes:true})) {
-        if(files.length>=1000 || directories.length>=1000)break;
         if(entry.name.startsWith('.') || entry.name==='数据' || entry.isSymbolicLink()) continue;
         const path=folder ? `${folder}/${entry.name}` : entry.name;
         if(entry.isDirectory()) {directories.push({path,name:entry.name});await visit(path,depth+1);}
         else if(entry.isFile() && /\.(md|txt)$/i.test(entry.name)) {
           const info=await lstat(await checked(path));
           files.push({path,name:entry.name,size:info.size,updatedAt:info.mtime.toISOString()});
-          if(files.length>=1000) return;
         }
       }
     }
@@ -114,6 +120,15 @@ export function createWorkspace(workspacePath) {
     try {body=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}
     catch {throw new Error('文稿不是 UTF-8 编码，请转换后再打开。');}
     return {path,title:basename(path,extname(path)).slice(0,80),body,revision:hash(bytes)};
+  }
+  async function saveDocumentInternal(input) {
+    const path=documentPath(input.path),target=await checked(path);let old;
+    try{old=await readFile(target);}catch(error){if(!missing(error))throw error;}
+    if(old&&(!input.revision||hash(old)!==input.revision))throw new Error('文件已在其他地方修改，未覆盖。请先保留编辑区内容，再重新打开文件。');
+    if(!old&&input.revision)throw new Error('原文件已被移动或删除，未另行覆盖。请保留编辑区内容。');
+    if(old&&old.toString('utf8')===input.body)return readDocument(path);
+    if(old)await history.backup(path,old);
+    await atomic(path,input.body);return readDocument(path);
   }
   async function trashEntry(id) {
     z.string().uuid().parse(id);
@@ -150,7 +165,7 @@ export function createWorkspace(workspacePath) {
       const cover=Object.hasOwn(preferences.covers,workPath)?preferences.covers[workPath]:null;
       if(cover) {
         const file=await checked(`数据/封面/${cover.id}.${coverTypes[cover.mime]}`);
-        if((await lstat(file)).size>2097152)throw new Error('封面超过 2 MB，请重新上传。');
+        if((await lstat(file)).size>MAX_COVER_BYTES)throw new Error('封面超过 2 MB，请重新上传。');
         coverDataUrl=`data:${cover.mime};base64,${(await readFile(file)).toString('base64')}`;
       }
     }
@@ -164,7 +179,7 @@ export function createWorkspace(workspacePath) {
       const draft=draftSchema.parse(await readJSON('草稿',{title:'未命名草稿',body:''}));
       const tree=await scanTree(),paths=new Set(tree.directories.map(folder=>folder.path));
       const works=tree.directories.filter(folder=>!folder.path.includes('/') && paths.has(folder.path+'/设定') && paths.has(folder.path+'/正文'));
-      return {folder:'码字工作台',...tree,works,settings,draft,features:{trash:true,works:true,statsPreferences:true,writingSuggestions:true,writingRequestContext:true}};
+      return {folder:'码字工作台',...tree,works,settings,draft,features:{trash:true,works:true,statsPreferences:true,writingSuggestions:true,writingRequestContext:true,pen:true,backups:true,search:true,readingPosition:true}};
     },
     createWork(input) {return sequential(async()=>{
       const name=z.string().trim().min(1).max(80).parse(input.name);
@@ -191,7 +206,7 @@ export function createWorkspace(workspacePath) {
           const match=values.coverDataUrl.match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
           if(!match)throw new Error('请选择 PNG、JPG 或 WebP 格式的封面。');
           const [,mime,data]=match,bytes=Buffer.from(data,'base64');
-          if(!bytes.length || bytes.length>2097152 || bytes.toString('base64')!==data)throw new Error('请选择 2 MB 以内的有效封面。');
+          if(!bytes.length || bytes.length>MAX_COVER_BYTES || bytes.toString('base64')!==data)throw new Error('请选择 2 MB 以内的有效封面。');
           const signature=mime==='image/png'?bytes.subarray(0,8).equals(Buffer.from('89504e470d0a1a0a','hex')):mime==='image/jpeg'?bytes.subarray(0,3).equals(Buffer.from('ffd8ff','hex')):bytes.subarray(0,4).toString()==='RIFF' && bytes.subarray(8,12).toString()==='WEBP';
           if(!signature)throw new Error('图片格式与文件内容不符，请重新选择封面。');
           const id=randomUUID();await atomic(`数据/封面/${id}.${coverTypes[mime]}`,bytes);
@@ -203,17 +218,7 @@ export function createWorkspace(workspacePath) {
       await writeJSON('悬浮窗',preferences);
       return statsInfo(preferences,values.workPath);
     });},
-    saveDocument(input) {return sequential(async()=>{
-      const path=documentPath(input.path);
-      const target=await checked(path);
-      let old;
-      try {old=await readFile(target);}catch(error){if(!missing(error)) throw error;}
-      if(old && (!input.revision || hash(old)!==input.revision)) throw new Error('文件已在其他地方修改，未覆盖。请先保留编辑区内容，再重新打开文件。');
-      if(!old && input.revision) throw new Error('原文件已被移动或删除，未另行覆盖。请保留编辑区内容。');
-      if(old) await atomic(`数据/备份/${basename(path)}.${Date.now()}.${randomUUID()}.bak`,old);
-      await atomic(path,input.body);
-      return readDocument(path);
-    });},
+    saveDocument(input) {return sequential(()=>saveDocumentInternal(input));},
     renameDocument(input) {return sequential(async()=>{
       const path=documentPath(input.path);
       const current=await readDocument(path);
@@ -226,7 +231,7 @@ export function createWorkspace(workspacePath) {
       try {await lstat(target);exists=true;}
       catch(error){if(!missing(error)) throw error;}
       if(exists) throw new Error('同名文稿或文件夹已存在，请换一个名称。');
-      await rename(await checked(path),target);
+      await renameLinked(path,nextPath);
       return {document:await readDocument(nextPath),previousPath:path};
     });},
     renameFolder(input) {return sequential(async()=>{
@@ -240,7 +245,7 @@ export function createWorkspace(workspacePath) {
       try {await lstat(await checked(nextPath));exists=true;}
       catch(error){if(!missing(error)) throw error;}
       if(exists) throw new Error('同名文件或文件夹已存在，请换一个名称。');
-      await rename(await checked(path),await checked(nextPath));
+      await renameLinked(path,nextPath);
       // 作品封面按作品目录名保存；作品目录改名后把封面迁移到新名字。
       if(!path.includes('/')) await migrateCover(path,nextPath);
       return {folder:{name,path:nextPath},previousPath:path};
@@ -292,7 +297,7 @@ export function createWorkspace(workspacePath) {
       return {restored:true,path:entry.path};
     });},
     saveDraft(input) {return sequential(async()=>{const draft=draftSchema.parse(input);await writeJSON('草稿',draft);return {saved:true};});},
-    saveSettings(input) {return sequential(async()=>{const settings=settingsSchema.parse(input);await writeJSON('外观',settings);return {settings};});},
+    saveSettings(input) {return sequential(async()=>{const settings=settingsSchema.parse({...await readJSON('外观',{background:'#fffdf8'}),...input});await writeJSON('外观',settings);return {settings};});},
     saveRecords(input) {return sequential(async()=>{
       const document=z.object({version:z.literal(1),records:z.array(recordSchema)}).parse(await readJSON('码字记录',{version:1,records:[]}));
       const byId=new Map(document.records.map(item=>[item.id,item]));
@@ -309,13 +314,16 @@ export function createWorkspace(workspacePath) {
       return {month,records:document.records.filter(item=>item.day.startsWith(month+'-'))};
     },
   };
-  const writing=createWritingStore({checked,atomic,validatePath:documentPath,readDocument,saveDocument:input=>api.saveDocument(input),
+  const history=createWorkspaceHistory({checked,atomic,readDocument,saveDocument:saveDocumentInternal,sequential,validatePath:documentPath});
+  const writing=createWritingStore({checked,atomic,validatePath:documentPath,readDocument,saveDocument:saveDocumentInternal,sequential,resolvePath:resolveDocumentAlias,
     readDraft:()=>readJSON('草稿',{title:'未命名草稿',body:''}),
-    commitDraft:(draft,expectedHash)=>sequential(async()=>{
+    commitDraft:async(draft,expectedHash)=>{
       const current=await readJSON('草稿',{title:'未命名草稿',body:''});
       if(hash(current.body)!==expectedHash)throw new Error('草稿已改变，未覆盖。');
       await writeJSON('草稿',draft);return draft;
-    }),
+    },
   });
-  return {...api,createWritingRequest:writing.create,writingRequests:({path})=>writing.list(path),getWritingRequest:writing.context,updateWritingRequest:writing.update,publishWritingSuggestion:writing.publish};
+  return {...api,createWritingRequest:writing.create,stageChatEdits:writing.stageChatEdits,writingRequests:({path,history,allDrafts})=>writing.list(path,{history,allDrafts}),getWritingRequest:writing.context,updateWritingRequest:writing.update,publishWritingSuggestion:writing.publish,writingVersion:({id,versionId})=>writing.version(id,versionId),listBackups:history.list,readBackup:({id})=>history.read(id),restoreBackup:history.restore,pruneBackups:history.prune,readingPosition:history.view,
+    async searchDocuments({workPath,query,offset=0,limit=100}){if(typeof query!=='string'||!query.trim()||query.length>200)throw new Error('请输入200字以内的搜索内容。');if(workPath)folderPath(workPath);z.number().int().min(0).parse(offset);z.number().int().min(1).max(200).parse(limit);const matches=[];let total=0;for(const file of (await scan()).filter(f=>!workPath||f.path.startsWith(workPath+'/'))){const doc=await readDocument(file.path),source=doc.body.replace(/\r\n?/g,'\n');let at=-query.length;while((at=source.indexOf(query,at+query.length))>=0){if(total>=offset&&matches.length<limit)matches.push({path:file.path,offset:at,excerpt:source.slice(Math.max(0,at-35),at+query.length+50)});total++;}}return {matches,total,offset,hasMore:total>offset+matches.length};},
+  };
 }

@@ -10,7 +10,7 @@
  *     → 界面渲染 + 聊天草稿写入
  *
  * 运行：
- *   "C:\Users\<你>\.dsh\electron\electron.exe" tests/e2e/main.cjs
+ *   & "$env:USERPROFILE\.dsh\electron\electron.exe" tests/e2e/main.cjs
  */
 const {app, BrowserWindow} = require('electron');
 const http = require('node:http');
@@ -355,7 +355,7 @@ async function main() {
     console.log('  ' + JSON.stringify(resized));
     if (!resized.visible) failures.push('侧栏分隔条没有渲染');
     if (!(resized.wide >= resized.before + 70)) failures.push(`拖动分隔条后侧栏宽度没有变化：${resized.before} → ${resized.wide}`);
-    if (resized.narrow !== 120) failures.push(`侧栏最窄宽度不是 120px：${resized.narrow}`);
+    if (resized.narrow !== 220) failures.push(`侧栏最窄宽度不是 220px：${resized.narrow}`);
     if (Math.abs(resized.stored - resized.narrow) > 2) failures.push(`侧栏宽度没有写入本地存储：${resized.stored} vs ${resized.narrow}`);
 
     // Fullscreen keeps only the editor plus the floating statistics, with two exit paths.
@@ -363,17 +363,20 @@ async function main() {
       const doc=document.getElementById('wb').contentDocument;
       const visible=id=>doc.getElementById(id).getBoundingClientRect().width>0;
       const body=doc.getElementById('draft-body').value;
-      const before=doc.getElementById('stats-float').getBoundingClientRect().toJSON();
+      const panel=doc.getElementById('stats-float');
+      const docked=panel.parentElement.classList.contains('files-sidebar') && doc.defaultView.getComputedStyle(panel).position==='relative';
       doc.getElementById('writing-fullscreen').click();
-      await new Promise(resolve=>setTimeout(resolve,80));
+      await new Promise(resolve=>setTimeout(resolve,120));
+      const floating=panel.classList.contains('is-detached') && doc.defaultView.getComputedStyle(panel).position==='fixed' && panel.getBoundingClientRect().width>0;
       const during={sidebar:visible('workbench-sidebar'),footer:doc.querySelector('.document-footer').getBoundingClientRect().width,exit:visible('writing-fullscreen-exit'),float:visible('stats-float'),bounds:doc.querySelector('.document').getBoundingClientRect().toJSON(),width:doc.defaultView.innerWidth,height:doc.defaultView.innerHeight};
       doc.getElementById('writing-fullscreen-exit').click();
+      await new Promise(resolve=>setTimeout(resolve,120));
       const restored=visible('workbench-sidebar');
       doc.getElementById('writing-fullscreen').click();
       doc.dispatchEvent(new doc.defaultView.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
-      return {during,restored,escaped:!doc.body.classList.contains('writing-fullscreen'),unchanged:doc.getElementById('draft-body').value===body,floatUnchanged:doc.getElementById('stats-float').getBoundingClientRect().width===before.width,titleSize:parseFloat(doc.defaultView.getComputedStyle(doc.getElementById('stats-work')).fontSize),fileHint:doc.getElementById('files-status').textContent,trashLabel:doc.getElementById('trash-open').textContent};
+      return {during,restored,escaped:!doc.body.classList.contains('writing-fullscreen'),unchanged:doc.getElementById('draft-body').value===body,docked,floating,redocked:panel.parentElement.classList.contains('files-sidebar')&&doc.defaultView.getComputedStyle(panel).position==='relative',titleSize:parseFloat(doc.defaultView.getComputedStyle(doc.getElementById('stats-work')).fontSize),fileHint:doc.getElementById('files-status').textContent,trashLabel:doc.getElementById('trash-open').textContent};
     })()`);
-    if(focus.during.sidebar || focus.during.footer || !focus.during.exit || !focus.during.float || !focus.restored || !focus.escaped || !focus.unchanged || !focus.floatUnchanged || focus.titleSize<16 || focus.fileHint || !focus.trashLabel.includes('回收站') || Math.abs(focus.during.bounds.width-focus.during.width)>1 || Math.abs(focus.during.bounds.height-focus.during.height)>1)failures.push('全屏或提示检查失败：'+JSON.stringify(focus));
+    if(focus.during.sidebar || focus.during.footer || !focus.during.exit || !focus.during.float || !focus.restored || !focus.escaped || !focus.unchanged || !focus.docked || !focus.floating || !focus.redocked || focus.titleSize<16 || focus.fileHint || !focus.trashLabel.includes('回收站') || Math.abs(focus.during.bounds.width-focus.during.width)>1 || Math.abs(focus.during.bounds.height-focus.during.height)>1)failures.push('全屏或提示检查失败：'+JSON.stringify(focus));
     console.log('✓ Fullscreen layout / exit / text preservation / work title / clean hints');
     await win.webContents.executeJavaScript("document.getElementById('wb').contentDocument.getElementById('writing-fullscreen').click()");
     await delay(120);await fs.writeFile(path.join(screenshotDir,'dsh-writing-fullscreen.png'),(await win.webContents.capturePage()).toPNG());

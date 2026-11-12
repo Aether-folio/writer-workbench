@@ -59,7 +59,7 @@ export function attachStatsPreferences({callTool,notify}) {
     dialog.close();snapshot=null;$('stats-settings').focus({preventScroll:true});
   }
   $('stats-settings').addEventListener('click',()=>{
-    takeSnapshot();$('stats-settings-error').textContent=supported?'':'悬浮窗设置已安装，请重启 Codex 后使用。';
+    takeSnapshot();$('stats-settings-error').textContent=supported?'':'码字统计设置已安装，请重启 Codex 后使用。';
     controls();render();dialog.showModal();
   });
   $('stats-settings-cancel').addEventListener('click',()=>close());
@@ -73,7 +73,7 @@ export function attachStatsPreferences({callTool,notify}) {
     try {
       const args={fields,...(petSupported?{pet}:{}),...(work?{workPath:work.path}:{})};
       const result=await callTool('save_stats_preferences',args);fields=result.fields;cover=result.coverDataUrl;acceptPet(result);
-      render();saving=false;close(true);notify('码字悬浮窗设置已保存。');
+      render();saving=false;close(true);notify('码字统计设置已保存。');
     } catch(error){$('stats-settings-error').textContent=error.message;}
     finally {saving=false;controls();}
   });
@@ -85,10 +85,10 @@ export function attachStatsPreferences({callTool,notify}) {
       const result=await callTool('stats_preferences',work?{workPath:work.path}:{});
       if(current!==generation)return;
       fields=result.fields;cover=result.coverDataUrl;acceptPet(result);render();if(dialog.open)takeSnapshot();
-    } catch(error){if(current===generation)notify('悬浮窗设置读取未完成：'+error.message);}
+    } catch(error){if(current===generation)notify('码字统计设置读取未完成：'+error.message);}
     finally {if(current===generation){loading=false;render();controls();}}
   });
-  // 封面在书架上右键更换；这里只同步悬浮窗里的显示。
+  // 封面在书架上右键更换；这里只同步码字统计里的显示。
   document.addEventListener('workbench:coverchange',event=>{
     if(!work || event.detail?.workPath!==work.path)return;
     cover=event.detail.coverDataUrl || null;

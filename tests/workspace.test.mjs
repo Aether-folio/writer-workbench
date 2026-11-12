@@ -70,6 +70,21 @@ test('文件夹可重命名：作品改名迁移封面，子文件夹连同文�
   await assert.rejects(store.renameFolder({path:'新作品',name:'../越界'}));
   assert.deepEqual((await store.scan()).map(file=>file.path),['新作品/第一卷/第一章.md']);
 }));
+test('旧外观兼容原生主题，玻璃色系重启恢复且部分更新不丢排版',()=>fixture(async(store,directory)=>{
+  await writeFile(join(store.root,'数据','外观.json'),JSON.stringify({background:'#dce8d2',fontSize:21}));
+  const old=(await store.info()).settings;
+  assert.equal(old.theme,'native');assert.equal(old.background,'#dce8d2');assert.equal(old.fontSize,21);
+  await store.saveSettings({theme:'glass',glassPalette:'iris',glassFrost:85});
+  const restarted=createWorkspace(directory),saved=(await restarted.info()).settings;
+  assert.equal(saved.theme,'glass');assert.equal(saved.glassPalette,'iris');assert.equal(saved.glassFrost,85);assert.equal(saved.fontSize,21);
+  await restarted.saveSettings({sidebarSide:'right'});
+  assert.equal((await restarted.info()).settings.glassPalette,'iris');
+  for(const input of [{theme:'other'},{glassPalette:'other'},{glassFrost:5},{glassFrost:100}])await assert.rejects(restarted.saveSettings(input));
+  assert.equal((await restarted.info()).settings.glassFrost,85);
+  await restarted.saveSettings({theme:'native'});
+  assert.equal((await restarted.info()).settings.background,'#dce8d2');
+}));
+
 test('文稿操作拒绝越界、数据文件和链接目录',()=>fixture(async(store,directory)=>{
   for(const path of ['../正文.md','数据/批注.md','D:/正文.md','文稿/../../正文.md','文稿/CON.txt','文稿/.secret.md']) {
     await assert.rejects(store.saveDocument({path,body:'不应写入'}));
@@ -135,8 +150,8 @@ test('删除拒绝旧版本、越界和链接，回收站数据不能用于越�
 }));
 
 test('添加作品创建三个空文件夹，作品名与文稿路径重启可恢复',()=>fixture(async(store,directory)=>{
-  const result=await store.createWork({name:'我被好运盯上了'});
-  assert.equal(result.work.name,'我被好运盯上了');
+  const result=await store.createWork({name:'测试长篇'});
+  assert.equal(result.work.name,'测试长篇');
   assert.deepEqual(new Set(await readdir(join(store.root,result.work.path))),new Set(['设定','正文','草稿']));
   assert.deepEqual(await store.scan(),[]);
   const info=await createWorkspace(directory).info();

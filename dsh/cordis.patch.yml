@@ -1,5 +1,5 @@
 # ============================================================================
-# 码字工作台（DSH 适配层）的 bundle patch
+# 递笔工作台（DSH 适配层）的 bundle patch
 # ============================================================================
 #
 # 这是本插件的挂载声明。DSH 启动时按 dsh.profile.bundles 的顺序叠加各包的
@@ -9,7 +9,7 @@
 # - name 必须与 package.json 的包名一致，Loader 才能解析到 lib/index.js（宿主半侧）。
 # - config.workspace 是「码字工作台」数据根所在的作品目录。数据写入
 #   <workspace>/码字工作台/；省略 workspace 时默认使用 WORKBENCH_WORKSPACE，
-#   未设置时为 D:\AI-Workspace\apps\writer-workbench，数据根为其下的 码字工作台/，
+#   未设置时使用用户主目录下的 WriterWorkspaces，数据根为其下的 码字工作台/，
 #   其下每个子目录是一部作品，作品内固定为 正文/、设定/、草稿/。
 # - config.editorFile 可省略；省略时读取包内 assets/editor.html。
 #

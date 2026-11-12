@@ -159,7 +159,8 @@ async function main() {
     await frame.locator('#shelf-page').waitFor({state: 'visible'});
     await frame.locator('.shelf-book[data-kind="work"]').first().waitFor();
     check(await frame.locator('#editor-page').isVisible() === false, '书架打开时编辑页不应同时显示');
-    check(await frame.locator('#workbench-sidebar').isVisible() === false, '书架页应隐藏文稿侧栏');
+    check(await frame.locator('.files-sidebar').isVisible() === false, '书架页应隐藏文稿文件树');
+    check(await frame.locator('.desk-header').isVisible(), '书架页应保留顶部品牌和设置入口');
     check(await frame.locator('.shelf-book[data-kind="work"]').count() === 3, '应渲染 3 本作品封面');
     check(await frame.locator('.shelf-book.is-loose').count() === 1, '散篇文稿应合成一本可打开的书');
     check(await frame.locator('.shelf-add').count() === 1, '有作品时应有「添加作品」入口');
@@ -174,18 +175,18 @@ async function main() {
     await frame.locator('.shelf-book[data-path="我被好运盯住了"]').click();
     await frame.locator('#editor-page').waitFor({state: 'visible'});
     check(await frame.locator('#shelf-page').isVisible() === false, '打开作品后书架应隐藏');
-    check(await frame.locator('#workbench-sidebar').isVisible(), '打开作品后应展开文稿侧栏');
+    check(await frame.locator('.files-sidebar').isVisible(), '打开作品后应展开文稿侧栏');
     check(await frame.locator('#draft-title').inputValue() === '第二章', '应打开「正文」里最近更新的第二章，实际：' + await frame.locator('#draft-title').inputValue());
     check((await frame.locator('#document-status').textContent()).includes('我被好运盯住了/正文/第二章.md'), '应打开对应作品的正文路径');
     check(await frame.locator('#shelf-home').getAttribute('aria-pressed') === 'false', '进入作品后顶部书架按钮应为未选中');
-    check(await frame.locator('#nav-editor').getAttribute('aria-pressed') === 'true', '进入作品后「写作」应为选中');
-    check(await frame.locator('#sidebar-toggle').isVisible(), '进入作品后侧栏开关应可用');
+    check(await frame.locator('#nav-editor').count() === 0, '「写作」按钮应已移除');
+    check(await frame.locator('#appearance-open').isVisible(), '进入作品后侧栏顶部的设置按钮应可用');
     await settle(page);
     await page.screenshot({path: resolve(output, 'shelf-opened-work.png')});
 
     await frame.locator('#shelf-home').click();
     await frame.locator('#shelf-page').waitFor({state: 'visible'});
-    check(await frame.locator('#workbench-sidebar').isVisible() === false, '回到书架后应隐藏侧栏');
+    check(await frame.locator('.files-sidebar').isVisible() === false, '回到书架后应隐藏侧栏');
     check(await frame.locator('#shelf-home').getAttribute('aria-pressed') === 'true', '书架按钮应处于选中状态');
 
     // 封面与作品名在书架上右键处理

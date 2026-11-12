@@ -1,0 +1,9 @@
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
+const assert=require('node:assert/strict');
+const {resolve}=require('node:path');
+const {fixture}=require('./app-fixture.cjs');
+async function main(){const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:{})});let active;
+try{active=await fixture(browser,{hostBridge:true});const {page,frame,workspace,doc}=active;await active.open(0,6);await frame.locator('#pen-instruction').fill('DSH 改写这句');await frame.locator('#pen-save').click();await frame.locator('.pen-note-marker').waitFor();await frame.locator('#annotations-to-chat').click();await page.waitForFunction(()=>window.submitted===1);assert.equal(await page.evaluate(()=>window.draftText),'已有聊天草稿');await active.publish('改写后的开头。','replace');await frame.locator('.pen-proposal-text').filter({hasText:'改写后的开头。'}).waitFor();assert.equal(await frame.locator('#pen-compare-dialog').isVisible(),false);await page.screenshot({path:resolve(__dirname,'../test-results/dsh-pen-diff.png')});await frame.locator('.pen-proposal-text').hover();await frame.locator('#pen-toolbar').getByRole('button',{name:'采纳此处',exact:true}).click();await frame.locator('.pen-proposal').waitFor({state:'hidden'});await new Promise(r=>setTimeout(r,2800));assert.equal(await frame.locator('.pen-proposal').count(),0);assert.equal((await workspace.readDocument(doc.path)).body,'改写后的开头。'+doc.body.slice(6));assert.deepEqual(active.errors,[]);console.log('PASS: DSH host bridge initializes, durable pen batch sends directly, returns range diff and accepts without ghost markers.');}
+finally{if(active)await active.close();await browser.close();}}
+if(require.main===module)main().catch(e=>{console.error(e);process.exitCode=1;});
+module.exports={main};

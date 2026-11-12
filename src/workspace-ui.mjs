@@ -1,22 +1,30 @@
 import {dayKey,splitDays,editCounts,aggregateDays} from './writing-records.mjs';
+import {attachAppearance} from './appearance-ui.mjs';
 import {formatTime} from './core.mjs';
 import {attachSidebar} from './sidebar.mjs';
+import {changedTextRanges} from './text-diff.mjs';
 import {buildShelfItems,pickWorkDocument,pickLatestDocument,renderShelf as renderShelfView,shelfSummary} from './shelf.mjs';
+import {prepareShelfCover} from './shelf-cover.mjs';
 
 const $=id=>document.getElementById(id);
 const uid=()=>globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const presets=[['纸白','#fffdf8'],['米黄','#f5edd8'],['豆绿','#dce8d2'],['雾蓝','#e2edf2'],['浅灰','#e6e7e9'],['夜墨','#242825']];
 const number=value=>Math.round(value).toLocaleString('zh-CN');
 
-export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded}) {
+export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded,isComposing=()=>false}) {
   let connected=false,path='',revision='',lastBody=editor.value,dirty=false,editVersion=0,documentSaving=null,saveTimeout;
+  let features={},positionTimer,externalChanges=null,changeTrackFrame=0;
   let titleSnapshot='',renamingTitle=false,titleCommit=null;
-  let settings={background:'#fffdf8'},fileList=[],newMode='blank',creating=false,historyMonth=dayKey().slice(0,7),selectedDay=dayKey(),historyGeneration=0,historyDays={};
+  let fileList=[],newMode='blank',creating=false,historyMonth=dayKey().slice(0,7),selectedDay=dayKey(),historyGeneration=0,historyDays={};
+  const appearance=attachAppearance({callTool,notify});
+  const applyAppearance=appearance.apply,adjustFontSize=appearance.adjustFontSize;
   let added=0,seenActive=0,seenIdle=0,statsSaving=null,statsVersion=0,savedStatsVersion=0,lastFlush=Date.now();
   let directoryList=[],workList=[],worksReady=false,selectedFolder='',newFolder='',statsPreferencesReady=false,lastStatsContext=null;
   let shelfCovers=new Map(),shelfCoversGeneration=0,shelfReady=false,draftInfo={title:'未命名草稿',body:''};
   let workDialogMode='add',workRenameTarget='',shelfMenuTarget=null,shelfMenuAnchor=null,coverTarget='',shelfStatusTimer;
-  const records=new Map();
+  const pendingCovers=new Set();
+  const records=new Map(),knownRevisions=new Map(),unreadFiles=new Set();
+  let pendingWritingFiles=new Set();
+  let fileScanVersion=0,diskRefresh=null,reportedConflict=null,lastWorkspaceDirectories;
   let pendingDelete=null,deleteGeneration=0,trashReady=false,trashBusy=false,pendingTrash=null;
   let finishStatus='';
   const sidebar=attachSidebar({editor,onOpen:openDocument,onDelete:requestDelete,onCreate:folder=>openNameDialog('blank',folder),onRename:(filePath,name)=>renameFile(filePath,name),onRenameFolder:(folderPath,name)=>renameFolder(folderPath,name),onSelectFolder:folder=>{selectedFolder=folder;updateStatsWork();},showEditor});
@@ -25,13 +33,15 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     const work=workList.find(item=>location===item.path || location.startsWith(item.path+'/'));
     const name=work ? `《${work.name.replace(/^《(.*)》$/,'$1')}》` : '未选择作品';
     $('stats-work').textContent=name;$('stats-work').title=name;
-    $('stats-drag-handle').setAttribute('aria-label',`移动码字悬浮窗，${name}，使用方向键移动`);
+    const head=$('stats-head');if(head && head.hasAttribute('role'))head.setAttribute('aria-label',`移动码字统计，${name}，使用方向键移动`);
     const contextKey=`${statsPreferencesReady}:${work?.path || ''}`;
     if(contextKey!==lastStatsContext) {
       lastStatsContext=contextKey;document.dispatchEvent(new CustomEvent('workbench:workchange',{detail:{work:work || null,supported:statsPreferencesReady}}));
     }
   }
   function acceptWorkspaceInfo(info) {
+    lastWorkspaceDirectories=info.directories;
+    features=info.features||{};
     fileList=info.files;directoryList=info.directories || [{name:'文稿',path:'文稿'}];workList=info.works || [];
     if(!fileList.some(file=>file.path.startsWith('文稿/')))directoryList=directoryList.filter(folder=>folder.path!=='文稿' && !folder.path.startsWith('文稿/'));
     trashReady=Boolean(info.features?.trash);worksReady=Boolean(info.features?.works);statsPreferencesReady=Boolean(info.features?.statsPreferences);
@@ -92,22 +102,22 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     input.value='';input.click();
   }
   async function removeWorkCover(workPath) {
+    if(pendingCovers.has(workPath))return;
+    pendingCovers.add(workPath);
     try {await saveWorkCover(workPath,null);shelfStatus('封面已移除。');}
     catch(error) {shelfStatus('封面未移除：'+error.message,'error');}
+    finally {pendingCovers.delete(workPath);}
   }
   async function handleShelfCoverFile(file) {
     const workPath=coverTarget;coverTarget='';
-    if(!file || !workPath)return;
-    if(!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size>2097152) {
-      shelfStatus('请选择 2 MB 以内的 PNG、JPG 或 WebP 图片。','error');return;
-    }
-    shelfStatus('正在保存封面…');
+    if(!file || !workPath || pendingCovers.has(workPath))return;
+    pendingCovers.add(workPath);
+    shelfStatus('正在处理封面…');
     try {
-      const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=()=>reject(new Error('图片读取失败'));reader.readAsDataURL(file);});
-      const image=new Image();image.src=data;await image.decode();
-      await saveWorkCover(workPath,data);
+      await saveWorkCover(workPath,await prepareShelfCover(file));
       shelfStatus('封面已更新。');
     } catch(error) {shelfStatus('封面未保存：'+error.message,'error');}
+    finally {pendingCovers.delete(workPath);}
   }
   async function loadCovers() {
     if(!worksReady) return;
@@ -117,8 +127,8 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     await Promise.all(missing.map(async work=>{
       try {
         const result=await callTool('stats_preferences',{workPath:work.path});
-        shelfCovers.set(work.path,String(result?.coverDataUrl || ''));
-      } catch {shelfCovers.set(work.path,'');}
+        if(!shelfCovers.has(work.path))shelfCovers.set(work.path,String(result?.coverDataUrl || ''));
+      } catch {if(!shelfCovers.has(work.path))shelfCovers.set(work.path,'');}
     }));
     if(generation===shelfCoversGeneration && !$('shelf-page').hidden) renderShelf();
   }
@@ -129,7 +139,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       try {
         clearTimeout(saveTimeout);pauseClock();await flushDocument();await flushRecords();
         const info=await refreshFiles();
-        sidebar.show();loadDocument(info?.draft || draftInfo);showEditor();
+        loadDocument(info?.draft || draftInfo);showEditor();
       } catch(error) {notify(error.message);}
       finally {creating=false;editor.readOnly=false;}
       return;
@@ -139,7 +149,6 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       const target=pickLatestDocument(loose);
       if(!target) {notify('这篇文稿似乎已被移动，正在刷新书架。');await refreshFiles().catch(()=>{});return;}
       selectedFolder=target.path.includes('/') ? target.path.slice(0,target.path.lastIndexOf('/')) : '文稿';
-      sidebar.show();
       await openDocument(target.path);
       return;
     }
@@ -150,7 +159,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     if(!work) {notify('没有找到这个作品，可能已被移动或删除。');await refreshFiles().catch(()=>{});return;}
     if(creating) return;
     selectedFolder=work.path+'/正文';
-    sidebar.show();sidebar.reveal(work.path);
+    sidebar.reveal(work.path);
     // 刚从这个作品回到书架时，优先回到原来那篇；否则打开正文里最近更新的一篇。
     const current=path && path.startsWith(work.path+'/') ? fileList.find(file=>file.path===path) : null;
     const target=current || pickWorkDocument(fileList,work.path);
@@ -164,7 +173,6 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     document.body.classList.add('is-shelf');
     document.querySelector('.workspace-shell')?.classList.add('shelf-mode');
     $('shelf-home').setAttribute('aria-pressed','true');
-    $('nav-editor').setAttribute('aria-pressed','false');
     $('nav-history').setAttribute('aria-pressed','false');
     renderShelf();
     onLoaded();
@@ -191,6 +199,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   }
   function pauseClock() {clock.pause(performance.now());collectTime();}
   function onEdit() {
+    if(externalChanges){externalChanges=null;renderExternalChanges();}
     const change=editCounts(lastBody,editor.value);lastBody=editor.value;
     if(change.added || change.deleted) {
       const record=recordFor(dayKey());record.added+=change.added;record.deleted+=change.deleted;record.title=title.value.trim() || record.title;added+=change.added;touch(record);
@@ -224,7 +233,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     try {
       const saved=await documentSaving;
       if(documentSaving===request) documentSaving=null;
-      if(path) revision=saved.revision;
+      if(path){revision=saved.revision;knownRevisions.set(path,revision);}
       if(editVersion===version) {dirty=false;$('document-status').textContent=path ? '已自动保存 · '+path : '草稿已自动保存，可另存为文稿';}
       else $('document-status').textContent='有新的修改，正在等待保存';
       await flushRecords().catch(()=>{});
@@ -253,11 +262,146 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     }
   }
   function renderFiles() {
-    sidebar.renderFiles(fileList,path,directoryList);updateStatsWork();
+    sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles);updateStatsWork();
   }
-  async function refreshFiles() {
-    const info=await callTool('workspace_info',{});acceptWorkspaceInfo(info);return info;
+  function setPendingWritingPaths(paths,activeHasPending) {
+    const next=Array.isArray(paths)?new Set(paths):new Set(pendingWritingFiles);
+    // An already-running service may only return suggestions for the current file.
+    if(!Array.isArray(paths) && path){
+      if(activeHasPending)next.add(path);
+      else next.delete(path);
+    }
+    if(next.size===pendingWritingFiles.size && [...next].every(filePath=>pendingWritingFiles.has(filePath)))return;
+    pendingWritingFiles=next;
+    sidebar.updateFileBadges(unreadFiles,pendingWritingFiles);
   }
+  async function refreshFiles({automatic=false,currentPath}={}) {
+    const version=++fileScanVersion;
+    const info=await callTool('workspace_info',{});
+    const previous=new Map(fileList.map(file=>[file.path,file]));
+    const changed=info.files.filter(file=>{
+      const prior=previous.get(file.path);
+      return file.path!==currentPath && prior && (prior.updatedAt!==file.updatedAt || prior.size!==file.size);
+    });
+    const newMarks=await Promise.all(changed.map(async file=>{
+      if(!knownRevisions.has(file.path))return file.path;
+      // A save made here also changes the timestamp. Compare its known revision.
+      try {
+        const latest=await callTool('read_document',{path:file.path});
+        return knownRevisions.get(file.path)!==latest.revision ? file.path : null;
+      } catch {return null;}
+    }));
+    if(version===fileScanVersion){
+      const existing=new Set(info.files.map(file=>file.path));
+      for(const filePath of unreadFiles)if(!existing.has(filePath))unreadFiles.delete(filePath);
+      for(const filePath of knownRevisions.keys())if(!existing.has(filePath))knownRevisions.delete(filePath);
+      for(const filePath of newMarks)if(filePath)unreadFiles.add(filePath);
+      const changedList=newMarks.some(Boolean)
+        || JSON.stringify(info.files)!==JSON.stringify(fileList)
+        || JSON.stringify(info.directories)!==JSON.stringify(lastWorkspaceDirectories)
+        || JSON.stringify(info.works||[])!==JSON.stringify(workList)
+        || JSON.stringify(info.features||{})!==JSON.stringify(features)
+        || (info.draft && (info.draft.title!==draftInfo.title || info.draft.body!==draftInfo.body));
+      if(!automatic || changedList)acceptWorkspaceInfo(info);
+    }
+    return info;
+  }
+  const changeTrack=$('external-change-track');
+  function renderChangeTrack() {
+    changeTrackFrame=0;
+    const rect=editor.getBoundingClientRect();
+    if(!rect.height || !editor.scrollHeight){changeTrack.hidden=true;changeTrack.replaceChildren();return;}
+    const parent=changeTrack.offsetParent || changeTrack.parentElement;
+    const frame=parent.getBoundingClientRect();
+    const scale=editor.clientHeight/editor.scrollHeight;
+    const markers=[];
+    function mark(bounds) {
+      if(!bounds.height)return;
+      const height=Math.max(3,bounds.height*scale);
+      const top=Math.max(0,Math.min(editor.clientHeight-height,(bounds.top-rect.top+editor.scrollTop)*scale));
+      markers.push({top,end:top+height});
+    }
+    if(externalChanges){
+      for(const name of ['external-change','external-deletion']){
+        for(const range of globalThis.CSS?.highlights?.get(name) || [])mark(range.getBoundingClientRect());
+      }
+    }
+    for(const proposal of editor.querySelectorAll('.pen-proposal[data-status="ready"] .pen-proposal-text:not([hidden])')){
+      mark(proposal.getBoundingClientRect());
+    }
+    markers.sort((a,b)=>a.top-b.top);
+    const merged=[];
+    for(const marker of markers){
+      const previous=merged.at(-1);
+      if(previous && marker.top<=previous.end)previous.end=Math.max(previous.end,marker.end);
+      else merged.push(marker);
+    }
+    const fragment=document.createDocumentFragment();
+    for(const {top,end} of merged){
+      const tick=document.createElement('span');
+      tick.style.top=`${top}px`;
+      tick.style.height=`${end-top}px`;
+      fragment.append(tick);
+    }
+    changeTrack.style.top=`${rect.top-frame.top-parent.clientTop}px`;
+    changeTrack.style.right=`${frame.right-rect.right-parent.clientLeft+editor.offsetWidth-editor.clientWidth+1}px`;
+    changeTrack.style.height=`${editor.clientHeight}px`;
+    changeTrack.replaceChildren(fragment);
+    changeTrack.hidden=!merged.length;
+  }
+  function scheduleChangeTrack() {
+    if(!changeTrackFrame)changeTrackFrame=requestAnimationFrame(renderChangeTrack);
+  }
+  new ResizeObserver(scheduleChangeTrack).observe(editor);
+  document.addEventListener('workbench:stats-layout',scheduleChangeTrack);
+  function renderExternalChanges() {
+    editor.highlightRanges('external-change',externalChanges?.additions || []);
+    editor.highlightRanges('external-deletion',externalChanges?.deletions || []);
+    scheduleChangeTrack();
+  }
+  document.addEventListener('workbench:source-projected',renderExternalChanges);
+  async function refreshCurrentDocument(target,automatic) {
+    if(!target || target!==path || creating)return;
+    if(documentSaving)await documentSaving.catch(()=>{});
+    if(target!==path || creating)return;
+    const knownRevision=revision,version=editVersion,before=editor.value;
+    const latest=await callTool('read_document',{path:target});
+    if(target!==path || creating || revision!==knownRevision || latest.revision===knownRevision)return;
+    if(dirty || editVersion!==version || editor.value!==before || isComposing()){
+      if(!automatic || reportedConflict!==latest.revision){
+        reportedConflict=latest.revision;
+        notify('磁盘上的文稿有改动，编辑区也有未保存的内容。已保留当前编辑，请先另存为，再重新打开原文稿。');
+      }
+      return;
+    }
+    if(automatic && (document.querySelector('dialog[open]') || title.value!==titleSnapshot || document.activeElement?.closest('[data-editor-decoration]')))return;
+    const after=latest.body.replace(/\r\n?/g,'\n');
+    if(after===before){revision=latest.revision;knownRevisions.set(path,revision);return;}
+    const changes=changedTextRanges(before,after);
+    const position={start:editor.selectionStart,end:editor.selectionEnd,scrollTop:editor.scrollTop,updateDOM:!automatic || document.activeElement===editor};
+    unreadFiles.add(target);
+    loadDocument(latest,position);
+    externalChanges=changes;
+    renderExternalChanges();
+    $('document-status').textContent='已刷新磁盘改动 · '+path;
+    notify(changes.removed && !after.trim()
+      ? '已重新读取当前文稿，原正文已被清空。'
+      : changes.additions.length || changes.deletions.length
+        ? '已重新读取当前文稿，改动处已用红色标记。'
+        : '已重新读取当前文稿。');
+  }
+  async function refreshFromDisk(automatic=false) {
+    if(!connected || creating || (automatic && (document.hidden || document.querySelector('.file-rename-input,.folder-rename-input'))))return;
+    if(diskRefresh)return diskRefresh;
+    const target=path;
+    diskRefresh=(async()=>{
+      await refreshFiles({automatic,currentPath:target});
+      await refreshCurrentDocument(target,automatic);
+    })();
+    try{await diskRefresh;}
+    finally{diskRefresh=null;}
+  }
+  const autoRefresh=()=>{void refreshFromDisk(true).catch(()=>{});};
   async function requestDelete(filePath) {
     if(creating)return;
     const generation=++deleteGeneration;pendingDelete=null;
@@ -313,31 +457,43 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       }
     } catch(error){$('trash-status').textContent='';$('trash-error').textContent=error.message;}
   }
-  function loadDocument(document) {
+  function loadDocument(document,position=null) {
+    externalChanges=null;reportedConflict=null;renderExternalChanges();
     path=document.path || '';revision=document.revision || '';editor.value=document.body;title.value=document.title;title.readOnly=false;titleSnapshot=path ? document.title : '';lastBody=editor.value;dirty=false;editVersion++;finishStatus='';
+    if(path)knownRevisions.set(path,revision);
     $('document-status').textContent=path ? '已打开 · '+path : '草稿已自动恢复';
     if(path)selectedFolder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'文稿';
     renderFiles();sidebar.renderOutline();onLoaded();
     documentChanged();
+    if(position){editor.setSelectionRange(position.start,position.end,position.updateDOM);editor.scrollTop=position.scrollTop;return;}
+    const loadedPath=path,version=editVersion;
+    if(features.readingPosition)callTool('reading_position',{path}).then(({position})=>{if(position&&path===loadedPath&&editVersion===version&&!dirty&&!globalThis.document.querySelector('dialog[open]')&&editor.selectionStart===0){editor.setSelectionRange(position.start,position.end);editor.scrollTop=position.scrollTop;}}).catch(()=>{});
   }
+  async function rememberPosition(){if(!connected||!features.readingPosition)return;const snapshot={path,position:{start:editor.selectionStart,end:editor.selectionEnd,scrollTop:Math.max(0,editor.scrollTop)}};await callTool('reading_position',snapshot);}
   function documentChanged() {document.dispatchEvent(new CustomEvent('workbench:documentchange',{detail:{path}}));}
-  async function acceptWritingSuggestion(item) {
+  async function applyWritingAction(item,action='accept',mergedText) {
     if(creating || !connected)throw new Error('正在处理文稿，请稍后重试。');
     if(path!==item.path)throw new Error('请回到建议所属的文稿后采纳。');
     const wasReadOnly=editor.readOnly,wasTitleReadOnly=title.readOnly;
     creating=true;editor.readOnly=true;title.readOnly=true;clearTimeout(saveTimeout);
     try {
       await flushDocument();
-      const result=await callTool('update_writing_request',{id:item.id,version:item.version,action:'accept',body:editor.value,...(path?{revision}:{})});
+      const requestAction=action==='accept' && mergedText!==undefined ? 'acceptMerged' : action;
+      const result=await callTool('update_writing_request',{id:item.id,version:item.version,action:requestAction,body:editor.value,...(path?{revision}:{}),...(mergedText!==undefined?{mergedText}:{})});
       editor.value=result.document.body;
       onEdit(); // Accepted text counts once; merely viewing a proposal never counts.
-      revision=result.document.revision || '';dirty=false;clearTimeout(saveTimeout);
-      $('document-status').textContent='已采纳并保存'+(path?' · '+path:'到草稿');
+      revision=result.document.revision || '';if(path)knownRevisions.set(path,revision);
+      dirty=false;clearTimeout(saveTimeout);
+      $('document-status').textContent=(action==='undo'?'已撤销采纳并保存':'已采纳并保存')+(path?' · '+path:'到草稿');
       sidebar.renderOutline();onLoaded();documentChanged();
+      const receipt=result.request.acceptance;
+      const caret=action==='accept'?(receipt?.start||0)+(receipt?.inserted??result.request.text).length:result.request.endOffset??result.request.offset;
+      editor.focus({preventScroll:true});editor.setSelectionRange(caret);editor.scrollSelectionIntoView();
       await flushRecords().catch(()=>{});
       return result;
     } finally {creating=false;editor.readOnly=wasReadOnly;title.readOnly=wasTitleReadOnly;}
   }
+  const acceptWritingSuggestion=(item,mergedText)=>applyWritingAction(item,'accept',mergedText);
   async function renameFile(filePath,rawName) {
     if(creating) throw new Error('正在保存当前文稿，请稍后再试。');
     const name=String(rawName ?? '').trim();
@@ -357,7 +513,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         lastBody=editor.value;dirty=false;editVersion++;finishStatus='';
         selectedFolder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'文稿';
         $('document-status').textContent='已重命名 · '+path;
-        sidebar.renderFiles(fileList,path,directoryList);sidebar.renderOutline();updateStatsWork();onLoaded();
+        sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles);sidebar.renderOutline();updateStatsWork();onLoaded();
         documentChanged();
       }
       notify(`已重命名为“${result.document.title}”。`);
@@ -397,7 +553,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         $('document-status').textContent='已重命名 · '+path;
       }
       if(selectedFolder===folderPath || selectedFolder.startsWith(folderPath+'/')) selectedFolder=nextPath+selectedFolder.slice(folderPath.length);
-      if(inside) {sidebar.renderFiles(fileList,path,directoryList);sidebar.renderOutline();onLoaded();documentChanged();}
+      if(inside) {sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles);sidebar.renderOutline();onLoaded();documentChanged();}
       updateStatsWork();
       notify(`文件夹已重命名为“${result.folder.name}”。`);
       return result.folder;
@@ -419,8 +575,12 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     if(creating) return;
     creating=true;editor.readOnly=true;
     try {
-      clearTimeout(saveTimeout);pauseClock();await flushDocument();await flushRecords();
-      const document=await callTool('read_document',{path:filePath});loadDocument(document);showEditor();
+      await rememberPosition().catch(()=>notify('阅读位置未保存，正文仍可正常打开。'));clearTimeout(saveTimeout);pauseClock();await flushDocument();await flushRecords();
+      const document=await callTool('read_document',{path:filePath});
+      unreadFiles.delete(filePath);
+      if(filePath===path && document.revision===revision && externalChanges)renderFiles();
+      else loadDocument(document);
+      showEditor();
     } catch(error) {notify(error.message);}
     finally {creating=false;editor.readOnly=false;}
   }
@@ -429,7 +589,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     document.body.classList.remove('is-shelf');
     document.querySelector('.workspace-shell')?.classList.remove('shelf-mode');
     $('shelf-home').setAttribute('aria-pressed','false');
-    $('nav-editor').setAttribute('aria-pressed','true');$('nav-history').setAttribute('aria-pressed','false');
+    $('nav-history').setAttribute('aria-pressed','false');
     sidebar.scrollToCurrent();
   }
   function showHistory() {
@@ -437,7 +597,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     document.body.classList.remove('is-shelf');
     document.querySelector('.workspace-shell')?.classList.remove('shelf-mode');
     $('shelf-home').setAttribute('aria-pressed','false');
-    $('nav-editor').setAttribute('aria-pressed','false');$('nav-history').setAttribute('aria-pressed','true');
+    $('nav-history').setAttribute('aria-pressed','true');
     loadHistory();
   }
   function openNameDialog(mode,folder) {
@@ -521,28 +681,6 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     } catch(error){$('work-error').textContent=error.message;}
     finally {creating=false;$('work-create').disabled=false;$('work-cancel').disabled=false;}
   }
-  function applyAppearance() {
-    const color=settings.background;
-    const rgb=[1,3,5].map(index=>parseInt(color.slice(index,index+2),16));
-    const linear=rgb.map(value=>{value/=255;return value<=.04045 ? value/12.92 : ((value+.055)/1.055)**2.4;});
-    const light=.2126*linear[0]+.7152*linear[1]+.0722*linear[2]>.179;
-    const root=document.documentElement;
-    const blend=(target,weight)=>'#'+rgb.map((value,i)=>Math.round(value*(1-weight)+target[i]*weight).toString(16).padStart(2,'0')).join('');
-    root.style.colorScheme=light ? 'light' : 'dark';
-    for(const [key,value] of Object.entries({paper:color,desk:light?'#edf2f8':'#131d2b',ink:light?'#101511':'#ffffff',muted:light?'#28312a':'#e3eee7',line:blend(light?[30,50,35]:[220,240,225],.2),surface:blend(light?[25,90,55]:[170,220,190],.08),accent:light?'#205c41':'#b0e4c5','accent-ink':light?'#ffffff':'#0f291a'})) root.style.setProperty('--'+key,value);
-    $('background-color').value=color;$('background-hex').value=color;
-    for(const button of $('background-presets').children) button.setAttribute('aria-pressed',String(button.dataset.color===color));
-  }
-  async function chooseBackground(color) {
-    if(!/^#[0-9a-f]{6}$/i.test(color)) {$('appearance-status').textContent='请输入 # 开头的六位颜色值。';return;}
-    const previous={...settings};settings={background:color.toLowerCase()};applyAppearance();
-    $('appearance-status').textContent='正在保存背景…';
-    try {await callTool('save_settings',settings);$('appearance-status').textContent='背景已保存。';}
-    catch(error) {settings=previous;applyAppearance();$('appearance-status').textContent='背景保存未完成：'+error.message;}
-  }
-  for(const [label,color] of presets) {
-    const button=document.createElement('button');button.type='button';button.dataset.color=color;button.textContent=label;button.style.background=color;button.style.color=color==='#242825'?'#eef6f0':'#203026';button.setAttribute('aria-pressed','false');button.addEventListener('click',()=>chooseBackground(color));$('background-presets').append(button);
-  }
   function selectDay(day) {
     selectedDay=day;
     for(const button of $('calendar-days').querySelectorAll('button')) button.setAttribute('aria-pressed',String(button.dataset.day===day));
@@ -579,7 +717,22 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       $('history-status').textContent='本月新增 '+number(result.records.reduce((sum,record)=>sum+record.added,0))+' 字';
     } catch(error) {if(generation===historyGeneration) $('history-status').textContent='读取未完成：'+error.message;}
   }
-  $('refresh-files').addEventListener('click',()=>refreshFiles().catch(error=>notify(error.message)));
+  $('refresh-files').addEventListener('click',async event=>{
+    const button=event.currentTarget;
+    if(button.disabled) return;
+    button.disabled=true;
+    button.setAttribute('aria-busy','true');
+    const feedback=new Promise(resolve=>setTimeout(resolve,420));
+    try{
+      await refreshFromDisk();
+    }catch(error){
+      notify(error.message);
+    }finally{
+      await feedback;
+      button.removeAttribute('aria-busy');
+      button.disabled=false;
+    }
+  });
   $('delete-confirm').addEventListener('click',confirmDelete);
   $('delete-cancel').addEventListener('click',()=>{if(!creating){++deleteGeneration;pendingDelete=null;$('delete-dialog').close();}});
   $('delete-dialog').addEventListener('cancel',event=>{if(creating)event.preventDefault();else {++deleteGeneration;pendingDelete=null;}});
@@ -599,19 +752,11 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   $('trash-open').addEventListener('click',()=>{$('trash-dialog').showModal();renderTrash();});
   $('trash-close').addEventListener('click',()=>{if(!trashBusy)$('trash-dialog').close();});
   $('trash-dialog').addEventListener('cancel',event=>{if(trashBusy)event.preventDefault();});
-  $('new-work').addEventListener('click',openWorkDialog);
   $('work-create').addEventListener('click',createWork);
   $('work-cancel').addEventListener('click',()=>{if(!creating)$('work-dialog').close();});
   $('work-dialog').addEventListener('cancel',event=>{if(creating)event.preventDefault();});
   $('work-name').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();createWork();}});
   async function afterTitleCommit() {if(titleCommit) await titleCommit.catch(()=>{});}
-  $('document-save').addEventListener('click',async()=>{
-    await afterTitleCommit();
-    if(creating) return;
-    if(path){await flushDocument().catch(()=>{});await flushRecords().catch(()=>{});}
-    else openNameDialog('current');
-  });
-  $('document-saveas').addEventListener('click',async()=>{await afterTitleCommit();openNameDialog('current');});
   $('document-create').addEventListener('click',createDocument);
   $('document-cancel').addEventListener('click',()=>{if(!creating)$('document-dialog').close();});
   $('document-dialog').addEventListener('cancel',event=>{if(creating)event.preventDefault();});
@@ -623,7 +768,6 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   });
   title.addEventListener('blur',()=>commitTitleRename());
   $('shelf-home').addEventListener('click',showShelf);
-  $('nav-editor').addEventListener('click',showEditor);
   $('history-close').addEventListener('click',()=>{showEditor();editor.focus({preventScroll:true});});
   $('nav-history').addEventListener('click',()=>{pauseClock();onLoaded();showHistory();});
   const shelfMenu=$('shelf-menu');
@@ -668,17 +812,19 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       event.preventDefault();showEditor();editor.focus({preventScroll:true});
     }
   });
-  $('appearance-open').addEventListener('click',()=>$('appearance-dialog').showModal());
-  $('appearance-close').addEventListener('click',()=>$('appearance-dialog').close());
-  $('background-color').addEventListener('change',event=>chooseBackground(event.target.value));
-  $('background-apply').addEventListener('click',()=>chooseBackground($('background-hex').value.trim()));
   document.addEventListener('keydown',async event=>{if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();await afterTitleCommit();if(creating)return;if(path)flushDocument().then(()=>flushRecords()).catch(()=>{});else if(!$('document-dialog').open)openNameDialog('current');}});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){pauseClock();flushDocument().catch(()=>{});flushRecords().catch(()=>{});}});
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden){pauseClock();flushDocument().catch(()=>{});flushRecords().catch(()=>{});}
+    else autoRefresh();
+  });
+  window.addEventListener('focus',autoRefresh);
+  window.setInterval(autoRefresh,4000);
+  for(const event of ['scroll','keyup','pointerup'])editor.addEventListener(event,()=>{clearTimeout(positionTimer);positionTimer=setTimeout(()=>rememberPosition().catch(()=>{}),350);});
   return {
-    onEdit,collectTime,flushRecords,flushDocument,acceptWritingSuggestion,finishWriting,applyAppearance,get added(){return added;},get path(){return path;},get finishStatus(){return finishStatus;},get canFinish(){return connected && !creating;},
+    onEdit,collectTime,flushRecords,flushDocument,setPendingWritingPaths,acceptWritingSuggestion,applyWritingAction,finishWriting,applyAppearance,adjustFontSize,openDocument,openDraft:()=>openShelfItem({kind:'draft'}),loadDocument,showEditor,get revision(){return revision;},get files(){return fileList;},get features(){return features;},get added(){return added;},get path(){return path;},get finishStatus(){return finishStatus;},get canFinish(){return connected && !creating;},
     async connected() {
       try {
-        const info=await callTool('workspace_info',{});connected=true;acceptWorkspaceInfo(info);settings=info.settings;applyAppearance();
+        const info=await callTool('workspace_info',{});connected=true;acceptWorkspaceInfo(info);appearance.load(info.settings);
         // Never replace text typed while the initial disk request was in flight.
         if(!dirty && !editor.value) loadDocument(info.draft);else {renderFiles();if(dirty)await flushDocument();}
       } catch(error) {$('files-status').textContent='本地文件连接未完成';$('document-status').textContent='尚未保存';$('shelf-subtitle').textContent='书架读取未完成，请检查本地文件服务。';notify(error.message);}

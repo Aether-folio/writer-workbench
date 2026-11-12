@@ -69,7 +69,7 @@ test('hidden context resolves regeneration without exposing it in the chat or gu
   await assert.rejects(workspace.getWritingRequest({path:'',instruction:ready.instruction}),/未找到/);
   await assert.rejects(workspace.getWritingRequest({path:'../逃逸.md',instruction:ready.instruction}));
   await create();await create();
-  await assert.rejects(workspace.getWritingRequest({path:doc.path,instruction:'写一段对话'}),/多条/);
+  const grouped=await workspace.getWritingRequest({path:doc.path,instruction:'写一段对话'});assert.equal(grouped.requests.length,2);assert.notEqual(grouped.requests[0].requestId,grouped.requests[1].requestId);
 }));
 
 test('regeneration isolates generations and rejection leaves the manuscript intact',()=>fixture(async({workspace,doc,create,publish})=>{

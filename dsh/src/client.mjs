@@ -1,9 +1,9 @@
 /**
- * 码字工作台 · DSH 客户端半侧（浏览器 bundle）
+ * 递笔工作台 · DSH 客户端半侧（浏览器 bundle）
  *
  * 界面仍然复用 Codex 版打包好的 editor.html（标准 MCP App），但不再做全屏
  * 遮罩，而是注册成 **DSH 原生右侧栏的一个标签页**：
- *   - 会话标题栏 utilities 增加「✎ 码字」按钮；
+ *   - 会话标题栏 utilities 增加「✎ 递笔」按钮；
  *   - 右侧栏标签页里用 iframe 加载 /writer-workbench/editor.html；
  *   - open_workbench 工具通过 openCounter 通知页面，页面调用 sidebarRight.openTab；
  *   - 原生标签页自带关闭按钮，右侧栏也可折叠，不会再出现“全屏盖住退不出”。
@@ -14,7 +14,7 @@ import {createHostBridge} from './bridge.mjs';
 import {deliverWorkbenchMessage} from './chat-message.mjs';
 
 const PLUGIN_ID = 'dsh-writer-workbench';
-const VERSION = '0.4.3-dsh.1';
+const VERSION = '0.5.0-dsh.1';
 
 /** 右侧栏标签类型的稳定标识（同时是 body/title 槽位的 key）。 */
 const TAB_ID = 'dsh-writer-workbench:writer-workbench';
@@ -50,7 +50,7 @@ function isDarkTheme() {
   }
 }
 
-/** 打开右侧栏里的码字工作台标签页；右侧栏会同时展开。 */
+/** 打开右侧栏里的递笔工作台标签页；右侧栏会同时展开。 */
 function openWorkbenchTab(ctx) {
   const api = safeGet(ctx, 'sidebarRight');
   if (api === undefined || api === null || typeof api.openTab !== 'function') {
@@ -197,7 +197,7 @@ function makeFactory() {
         h('iframe', {
           ref: frameRef,
           className: 'dww-side-frame',
-          title: '码字工作台',
+          title: '递笔工作台',
           src: '/writer-workbench/editor.html?v=' + encodeURIComponent(VERSION),
           allow: 'clipboard-write',
         }),
@@ -209,12 +209,12 @@ function makeFactory() {
       return h('button', {
         type: 'button',
         className: 'dww-header-btn',
-        title: '在右侧栏打开码字工作台',
-        'aria-label': '打开码字工作台',
+        title: '在右侧栏打开递笔工作台',
+        'aria-label': '打开递笔工作台',
         onClick: () => { openWorkbenchTab(ctx); },
       },
       h('span', {className: 'dww-header-icon', 'aria-hidden': 'true'}, '✎'),
-      h('span', null, '码字'),
+      h('span', null, '递笔'),
       );
     }
 
@@ -308,11 +308,11 @@ function makeFactory() {
             kind: TAB_KIND,
             keepMounted: true,
             priority: 'extension',
-            title: () => '码字工作台',
+            title: () => '递笔工作台',
             guide: [{
               id: 'writer-workbench',
               order: 20,
-              title: () => '码字工作台',
+              title: () => '递笔工作台',
               description: () => '写作、批注与码字日历',
             }],
           });

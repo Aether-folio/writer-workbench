@@ -101,7 +101,7 @@ test('client bundle registers the native sidebar tab, header button and open wat
   assert.equal(tabDefinition.kind, 'writer-workbench');
   assert.equal(tabDefinition.keepMounted, true);
   assert.equal(typeof tabDefinition.title, 'function');
-  assert.equal(tabDefinition.title(''), '码字工作台');
-  assert.equal(tabDefinition.guide[0].title(), '码字工作台');
+  assert.equal(tabDefinition.title(''), '递笔工作台');
+  assert.equal(tabDefinition.guide[0].title(), '递笔工作台');
   assert.equal(typeof effects[0].dispose, 'function');
 });

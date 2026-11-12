@@ -140,8 +140,8 @@ async function fixture(browser,messageEnabled,displayOptions={},testApi) {
     console.error(JSON.stringify({errors,requests:await page.evaluate(()=>window.testRequests),status:await frame.locator('#host-status').textContent(),feedback:await frame.locator('#feedback').textContent()}));
     throw error;
   }
-  // 工作台现在从书架进入；编辑器相关用例统一先切到「写作」页。
-  await frame.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
+  // 工作台从书架进入；编辑器相关用例先打开书架上的「散篇文稿」。
+  await frame.locator('.shelf-book').first().click();
   await frame.locator('#editor-page').waitFor({state:'visible'});
   return {page,frame,errors};
 }
@@ -302,10 +302,10 @@ if(require.main===module) (async()=>{
     report.checks.push('daily calendar, date detail and month navigation; close button and Escape return to unchanged editor with sidebar collapsed');
     await frame.locator('#appearance-open').click();
     await frame.getByRole('button',{name:'豆绿',exact:true}).click();
-    await frame.locator('#appearance-status').filter({hasText:'背景已保存'}).waitFor();
+    await frame.locator('#appearance-status').filter({hasText:'所有设置已保存'}).waitFor();
     assert.equal(await page.evaluate(()=>window.testSettings.background),'#dce8d2');
     await frame.getByRole('button',{name:'夜墨',exact:true}).click();
-    await frame.locator('#appearance-status').filter({hasText:'背景已保存'}).waitFor();
+    await frame.locator('#appearance-status').filter({hasText:'所有设置已保存'}).waitFor();
     await frame.locator('#appearance-close').click();
     await frame.locator('#nav-history').click();
     await frame.locator('#calendar-days button').first().waitFor();
@@ -314,7 +314,7 @@ if(require.main===module) (async()=>{
     await frame.locator('#appearance-open').click();
     await frame.locator('#background-hex').fill('#eadfcb');
     await frame.locator('#background-apply').click();
-    await frame.locator('#appearance-status').filter({hasText:'背景已保存'}).waitFor();
+    await frame.locator('#appearance-status').filter({hasText:'所有设置已保存'}).waitFor();
     await frame.locator('#appearance-close').click();
     await page.locator('#app').evaluate(el=>{el.srcdoc=el.srcdoc;});
     await frame.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();

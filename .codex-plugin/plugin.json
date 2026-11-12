@@ -1,21 +1,28 @@
 {
   "name": "writer-workbench",
-  "version": "0.4.3",
-  "description": "Codex内的本地写作工作台：文稿编辑、自动保存、AI 定点插入与待采纳框、批注重生成和码字日历。",
-  "author": { "name": "Local Writing Tools" },
+  "version": "0.5.0",
+  "description": "Codex 内的本地递笔工作台：递笔协作、原位改写对照、持久批注、历史恢复和码字日历。",
+  "author": {
+    "name": "Local Writing Tools"
+  },
   "license": "MIT",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "requires_local_executor": true,
   "interface": {
-    "displayName": "码字工作台",
-    "shortDescription": "文稿编辑、AI 插入与批注重生成",
-    "longDescription": "在工作区的码字工作台文件夹管理和编辑文稿，自动保存并保留覆盖前备份。可在光标处请求 AI 写作，返回与正文格式一致的可编辑文本框，支持采纳、批注重生成或不采纳。还支持选区聊天引用、批注、码字日历、背景和萌宠。正文默认1.5倍间距。",
+    "displayName": "递笔工作台",
+    "shortDescription": "递笔协作、原位对照与本地写作",
+    "longDescription": "统一递笔入口：在选区或光标处填写要求，暂存为原位批注，或单条、批量直发聊天。补写和改写以正文淡背景预览，可编辑、对照、再递笔、采纳或不采纳。支持历史版本、撤销采纳、备份恢复、整本搜索与自定义排版。",
     "developerName": "Local Writing Tools",
     "category": "Productivity",
-    "capabilities": ["Interactive"],
+    "capabilities": [
+      "Interactive"
+    ],
     "composerIcon": "./assets/icon.svg",
     "logo": "./assets/icon.svg",
-    "defaultPrompt": ["打开码字工作台", "检查码字工作台接入状态"]
+    "defaultPrompt": [
+      "打开递笔工作台",
+      "检查递笔工作台接入状态"
+    ]
   }
 }

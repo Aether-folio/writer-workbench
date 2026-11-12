@@ -127,7 +127,7 @@ export function createHostBridge({callTool, insertDraft, openLink, getHostContex
         return ok(id, {resources: []});
 
       case 'resources/read':
-        return fail(id, -32602, '码字工作台不提供 MCP resources。');
+        return fail(id, -32602, '递笔工作台不提供 MCP resources。');
 
       default:
         return fail(id, -32601, `不支持的方法：${method}`);

@@ -1,7 +1,7 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-  把码字工作台（DSH 适配层）安装到一个 DSH profile，并可选安装技能。
+  把递笔工作台（DSH 适配层）安装到一个 DSH profile，并可选安装技能。
 
 .DESCRIPTION
   1. 构建 lib/ 与 assets/editor.html；
@@ -16,9 +16,8 @@
   DSH profile 名，桌面应用默认 desktop。
 
 .PARAMETER Workspace
-  作品目录；默认 D:\AI-Workspace\apps\writer-workbench，可由 WORKBENCH_WORKSPACE 覆盖。
-  数据根为 <插件目录>\码字工作台\，其下每个作品目录是一部作品，
-  作品内固定为 正文/、设定/、草稿/。与默认值不同时，会写一条 profile 层覆盖行。
+  作品目录。省略时读取 WORKBENCH_WORKSPACE，未设置时使用用户主目录下的 WriterWorkspaces。
+  数据根为 <作品目录>\码字工作台\。安装会为新 profile 配置此路径，已有覆盖继续生效。
 
 .PARAMETER DshCmd
   dsh 命令路径；省略时自动查找 PATH，再查找 DeepSeek Harness 默认安装位置。
@@ -31,7 +30,7 @@
 
 .EXAMPLE
   .\install.ps1
-  .\install.ps1 -Profile desktop -Workspace "D:\AI-Workspace\apps\writer-workbench"
+  .\install.ps1 -Profile desktop -Workspace (Join-Path $env:USERPROFILE 'MyWriting')
 #>
 [CmdletBinding()]
 param(
@@ -44,13 +43,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $packageRoot = $PSScriptRoot
-if (-not $Workspace) {
-  # 与 Codex 和 DSH 宿主采用相同的默认目录。
-  $Workspace = if ($env:WORKBENCH_WORKSPACE) { $env:WORKBENCH_WORKSPACE } else { 'D:\AI-Workspace\apps\writer-workbench' }
-  $Workspace = [System.IO.Path]::GetFullPath($Workspace)
-} else {
-  $Workspace = (Resolve-Path -LiteralPath $Workspace).Path
+if ([string]::IsNullOrWhiteSpace($Workspace)) {
+  $Workspace = $env:WORKBENCH_WORKSPACE
 }
+if ([string]::IsNullOrWhiteSpace($Workspace)) {
+  $Workspace = Join-Path $env:USERPROFILE 'WriterWorkspaces'
+}
+$Workspace = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Workspace.Trim())
 
 function Find-DshCmd {
   if ($DshCmd) {
@@ -59,10 +58,8 @@ function Find-DshCmd {
   }
   $command = Get-Command dsh -ErrorAction SilentlyContinue
   if ($command) { return $command.Source }
-  foreach ($candidate in @(
-      'D:\agent\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd',
-      "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd"
-    )) {
+  if ($env:LOCALAPPDATA) {
+    $candidate = Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'
     if (Test-Path -LiteralPath $candidate) { return $candidate }
   }
   throw '找不到 dsh 命令。请用 -DshCmd 指定 dsh.cmd 的完整路径。'
@@ -105,12 +102,12 @@ function Add-WorkspaceOverride {
   $existing = if (Test-Path -LiteralPath $patchPath) { Get-Content -LiteralPath $patchPath -Raw } else { '' }
   if ($existing -match '(?m)^\s*-\s*id:\s*writer-workbench\s*$') {
     Write-Host '  profile 覆盖行已存在，保留原配置（如需改 workspace 请手动编辑）。'
-    return
+    return $false
   }
   $escaped = $WorkspacePath.Replace("'", "''")
   $block = @"
 
-# 码字工作台：profile 层覆盖 bundle 默认的 workspace（安装脚本写入）
+# 递笔工作台：profile 层覆盖 bundle 默认的 workspace（安装脚本写入）
 - id: writer-workbench
   name: dsh-writer-workbench
   config:
@@ -118,11 +115,12 @@ function Add-WorkspaceOverride {
 "@
   Add-Content -LiteralPath $patchPath -Value $block -Encoding UTF8
   Write-Host "  已写入 workspace 覆盖：$WorkspacePath"
+  return $true
 }
 
-Write-Host '码字工作台 · DSH 适配层安装'
+Write-Host '递笔工作台 · DSH 适配层安装'
 Write-Host "  插件目录：$packageRoot"
-Write-Host "  作品目录：$Workspace"
+Write-Host "  新配置拟用作品目录：$Workspace"
 Write-Host "  profile：$Profile"
 
 if (-not $SkipBuild) {
@@ -155,7 +153,7 @@ Write-Host '[3/5] 确认 bundle 选择…'
 Update-ProfileManifest -ProfileDir $profileDir -PackageName 'dsh-writer-workbench'
 
 Write-Host '[4/5] 写入 profile 层 workspace…'
-Add-WorkspaceOverride -ProfileDir $profileDir -WorkspacePath $Workspace
+$workspaceConfigured = Add-WorkspaceOverride -ProfileDir $profileDir -WorkspacePath $Workspace
 
 if (-not $SkipSkill) {
   Write-Host '[5/5] 安装技能…'
@@ -163,8 +161,7 @@ if (-not $SkipSkill) {
   $skillTarget = Join-Path (Join-Path $env:USERPROFILE '.dsh\skills') 'writing-workbench'
   if (Test-Path -LiteralPath $skillSource) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $skillTarget) | Out-Null
-    if (Test-Path -LiteralPath $skillTarget) { Remove-Item -LiteralPath $skillTarget -Recurse -Force }
-    Copy-Item -LiteralPath $skillSource -Destination $skillTarget -Recurse -Force
+    Copy-Item -LiteralPath $skillSource -Destination (Split-Path -Parent $skillTarget) -Recurse -Force
     Write-Host "  技能已安装：$skillTarget"
   } else {
     Write-Host '  技能目录不存在，跳过。'
@@ -175,7 +172,11 @@ if (-not $SkipSkill) {
 
 Write-Host ''
 Write-Host '完成。请完全退出并重新启动 DSH 桌面应用，然后：'
-Write-Host '  - 点页面右侧的「✎ 码字工作台」；'
-Write-Host '  - 或在对话里说“打开码字工作台”（open_workbench）；'
-Write-Host '  - 说“检查码字工作台接入”验证（workbench_status）。'
-Write-Host '数据仍保存在：' (Join-Path $Workspace '码字工作台')
+Write-Host '  - 点页面右侧的「✎ 递笔工作台」；'
+Write-Host '  - 或在对话里说“打开递笔工作台”（open_workbench）；'
+Write-Host '  - 说“检查递笔工作台接入”验证（workbench_status）。'
+if ($workspaceConfigured) {
+  Write-Host '数据目录：' (Join-Path $Workspace '码字工作台')
+} else {
+  Write-Host '沿用原 profile 的数据目录，可通过 workbench_status 查看。'
+}

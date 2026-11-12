@@ -3,7 +3,7 @@
  *
  * 传入一个已启动的 DSH Web URL（含 token），脚本会：
  *  1. 跳过预览版说明并确保有活动会话；
- *  2. 点击输入框右侧的「✎ 码字」入口；
+ *  2. 点击输入框右侧的「✎ 递笔」入口；
  *  3. 验证工作台在 **右侧栏标签页** 打开（不是全屏遮罩），iframe 连上 DSH 宿主；
  *  4. 验证现有作品/章节渲染、选区对话弹窗（取消，不实际发送）；
  *  5. 用原生标签页的「关闭」按钮关闭，再验证 open_workbench 计数能重新打开。
@@ -87,7 +87,7 @@ app.whenReady().then(async () => {
     }
     await waitFor(win, "Boolean(document.querySelector('[contenteditable=\"true\"]'))", 20000, '聊天输入框');
 
-    await waitFor(win, "Boolean(document.querySelector('.dww-header-btn'))", 10000, '输入框右侧「✎ 码字」入口');
+    await waitFor(win, "Boolean(document.querySelector('.dww-header-btn'))", 10000, '输入框右侧「✎ 递笔」入口');
     const entry = await win.webContents.executeJavaScript(`(() => {
       const button = document.querySelector('.dww-header-btn');
       return {text: button.textContent.trim(), title: button.title};

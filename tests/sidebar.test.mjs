@@ -41,7 +41,7 @@ test('新作品与空的设定、正文、草稿文件夹无需文稿即可显�
   const directories=['测试作品','测试作品/设定','测试作品/正文','测试作品/草稿'].map(path=>({path}));
   const tree=fileTree([],directories);
   assert.equal(tree[0].name,'测试作品');
-  assert.deepEqual(new Set(tree[0].children.map(node=>node.name)),new Set(['设定','正文','草稿']));
+  assert.deepEqual(tree[0].children.map(node=>node.name),['正文','草稿','设定']);
   assert.ok(tree[0].children.every(node=>node.children.length===0));
   assert.equal(fileTree([{path:'测试作品/正文/第一章.md'}],directories)[0].children.find(node=>node.name==='正文').children[0].name,'第一章.md');
 });

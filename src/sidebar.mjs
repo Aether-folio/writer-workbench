@@ -35,7 +35,8 @@ export function fileTree(files,directories=[]) {
       branch=branch.get(name).children;
     }
   }
-  const sort=branch=>[...branch.values()].sort((a,b)=>Number(Boolean(b.children))-Number(Boolean(a.children)) || ordinalSortKey(a.name).localeCompare(ordinalSortKey(b.name),'zh-CN',{numeric:true}) || a.name.localeCompare(b.name,'zh-CN',{numeric:true})).map(node=>({...node,...(node.children?{children:sort(node.children)}:{})}));
+  const priority = node => !node.children ? 2 : node.name === '正文' ? 0 : 1;
+  const sort=branch=>[...branch.values()].sort((a,b)=>priority(a)-priority(b) || ordinalSortKey(a.name).localeCompare(ordinalSortKey(b.name),'zh-CN',{numeric:true}) || a.name.localeCompare(b.name,'zh-CN',{numeric:true})).map(node=>({...node,...(node.children?{children:sort(node.children)}:{})}));
   return sort(root);
 }
 
@@ -168,7 +169,19 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     if(row.top<view.top)list.scrollTop-=view.top-row.top;
     else if(row.bottom>view.bottom)list.scrollTop+=row.bottom-view.bottom;
   }
-  function renderFiles(files,path,directories=[]) {
+  function updateFileBadges(unreadFiles,pendingFiles) {
+    for(const button of $('file-list').querySelectorAll('.file-entry[data-path]')){
+      const path=button.dataset.path;
+      const reasons=[];
+      if(pendingFiles.has(path))reasons.push('有待采纳改稿');
+      if(unreadFiles.has(path))reasons.push('有未查看的外部改动');
+      button.classList.toggle('file-entry-unread',reasons.length>0);
+      button.title=[path,'右键重命名（F2）',...reasons].join('\n');
+      if(reasons.length)button.setAttribute('aria-label',[button.textContent,...reasons].join('，'));
+      else button.removeAttribute('aria-label');
+    }
+  }
+  function renderFiles(files,path,directories=[],unreadFiles=new Set(),pendingFiles=new Set()) {
     const changed=path!==currentPath;currentPath=path;
     const list=$('file-list');list.replaceChildren();
     function append(nodes,parent) {
@@ -191,6 +204,7 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
         } else {
           const row=document.createElement('div');row.className='file-row';
           const button=document.createElement('button');button.type='button';button.className='file-entry';button.textContent=node.name;button.title=node.path+'\n右键重命名（F2）';button.setAttribute('aria-current',String(node.path===path));
+          button.dataset.path=node.path;
           button.addEventListener('click',()=>onOpen(node.path));
           button.addEventListener('contextmenu',event=>{event.preventDefault();closeFileMenu();showFileMenu(event.clientX,event.clientY,{kind:'file',path:node.path,rename:()=>startRename(row,button,node)});});
           button.addEventListener('keydown',event=>{if(event.key==='F2'){event.preventDefault();startRename(row,button,node);}});
@@ -201,6 +215,7 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
       }
     }
     append(fileTree(files,directories),list);
+    updateFileBadges(unreadFiles,pendingFiles);
     if(changed) scrollToCurrent();
     $('files-status').textContent=files.length ? '' : '暂无文稿，可在文件夹旁点击 ＋ 新建。';
     $('files-status').hidden=Boolean(files.length);
@@ -243,34 +258,21 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     });
   }
   editor.addEventListener('input',()=>{clearTimeout(outlineTimer);if(!$('sidebar-outline-panel').hidden)outlineTimer=setTimeout(renderOutline,180);});
-  function setCollapsed(collapsed,focus=false) {
-    const shell=document.querySelector('.workspace-shell');
-    if(!shell)return;
-    shell.classList.toggle('sidebar-collapsed',collapsed);
-    const toggle=$('sidebar-toggle');
-    toggle.setAttribute('aria-expanded',String(!collapsed));
-    const label=collapsed?'展开侧栏':'收起侧栏';
-    toggle.setAttribute('aria-label',label);toggle.title=label;
-    toggle.hidden=collapsed;
-    $('sidebar-reopen').hidden=!collapsed;$('sidebar-reopen').setAttribute('aria-expanded',String(!collapsed));
-    if(focus)(collapsed?$('sidebar-reopen'):toggle).focus({preventScroll:true});
-  }
-  function showSidebar() {setCollapsed(false);}
   /** 打开作品时展开对应文件夹，避免它此前被手动收起后仍保持折叠。 */
   function reveal(folderPath) {if(typeof folderPath==='string' && folderPath)openFolders.add(folderPath);}
-  const toggleFromButton=()=>setCollapsed(!document.querySelector('.workspace-shell')?.classList.contains('sidebar-collapsed'),true);
-  $('sidebar-toggle').addEventListener('click',toggleFromButton);
-  $('sidebar-reopen').addEventListener('click',toggleFromButton);
   function initSidebarResize() {
     const shell=document.querySelector('.workspace-shell'),pane=$('workbench-sidebar'),handle=$('sidebar-resizer');
     if(!shell || !pane || !handle) return;
-    const KEY='writer-workbench:sidebar-width',MIN=120,MAX=560,STEP=16;
+    const KEY='writer-workbench:sidebar-width',MIN=220,MAX=560,STEP=16;
     let stored=0;
     try {const value=Number(localStorage.getItem(KEY));if(Number.isFinite(value)&&value>=MIN)stored=value;} catch {}
     const maxWidth=()=>shell.clientWidth>0 ? Math.max(MIN,Math.min(MAX,shell.clientWidth-360)) : MAX;
     const clampWidth=value=>Math.round(Math.max(MIN,Math.min(maxWidth(),value)));
     const paneWidth=()=>pane.getBoundingClientRect().width || MIN;
-    const apply=value=>{const width=clampWidth(value);shell.style.setProperty('--wb-sidebar-width',width+'px');handle.setAttribute('aria-valuenow',String(width));return width;};
+    // 侧栏放到正文右边时，分隔条在左侧，向左拖才是变宽。
+    const onRight=()=>document.body.dataset.sidebarSide==='right';
+    // 同步到根元素，工作台外框（#writing-desk）按「侧栏 + 正文宽度」计算最大宽度。
+    const apply=value=>{const width=clampWidth(value);shell.style.setProperty('--wb-sidebar-width',width+'px');document.documentElement.style.setProperty('--wb-sidebar-width',width+'px');handle.setAttribute('aria-valuenow',String(width));return width;};
     const remember=value=>{try {localStorage.setItem(KEY,String(value));} catch {}};
     const custom=()=>shell.style.getPropertyValue('--wb-sidebar-width')!=='';
     if(stored)apply(stored);else handle.setAttribute('aria-valuenow',String(Math.round(paneWidth())));
@@ -285,7 +287,7 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     });
     handle.addEventListener('pointermove',event=>{
       if(!drag || event.pointerId!==drag.id)return;
-      apply(drag.startWidth+event.clientX-drag.startX);
+      apply(drag.startWidth+(onRight()?drag.startX-event.clientX:event.clientX-drag.startX));
     });
     const endDrag=event=>{
       if(!drag || event.pointerId!==drag.id)return;
@@ -295,15 +297,34 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     };
     handle.addEventListener('pointerup',endDrag);
     handle.addEventListener('pointercancel',endDrag);
-    handle.addEventListener('dblclick',()=>{shell.style.removeProperty('--wb-sidebar-width');stored=0;try {localStorage.removeItem(KEY);} catch {}handle.setAttribute('aria-valuenow',String(Math.round(paneWidth())));});
+    handle.addEventListener('dblclick',()=>{shell.style.removeProperty('--wb-sidebar-width');document.documentElement.style.removeProperty('--wb-sidebar-width');stored=0;try {localStorage.removeItem(KEY);} catch {}handle.setAttribute('aria-valuenow',String(Math.round(paneWidth())));});
     handle.addEventListener('keydown',event=>{
       if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
       event.preventDefault();
-      const next=event.key==='Home'?MIN:event.key==='End'?MAX:paneWidth()+(event.key==='ArrowLeft'?-STEP:STEP);
+      const delta=event.key==='ArrowLeft'?-STEP:STEP;
+      const next=event.key==='Home'?MIN:event.key==='End'?MAX:paneWidth()+(onRight()?-delta:delta);
       remember(apply(next));
     });
     window.addEventListener('resize',()=>{if(custom())apply(paneWidth());});
   }
   initSidebarResize();
-  return {renderFiles,renderOutline,show:showSidebar,reveal,scrollToCurrent};
+  const compactFilesToggle=$('compact-files-toggle');
+  const narrow=matchMedia('(max-width:780px)');
+  function setCompactFiles(open){
+    compactFilesToggle.setAttribute('aria-expanded',String(open));
+    document.body.classList.toggle('compact-files-open',open);
+  }
+  compactFilesToggle.addEventListener('click',()=>{
+    setCompactFiles(compactFilesToggle.getAttribute('aria-expanded')==='false');
+  });
+  document.addEventListener('workbench:documentchange',()=>setCompactFiles(false));
+  narrow.addEventListener('change',()=>setCompactFiles(false));
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&!event.defaultPrevented&&!event.isComposing&&compactFilesToggle.offsetWidth&&document.body.classList.contains('compact-files-open')&&!document.querySelector('dialog[open]')){
+      event.preventDefault();
+      setCompactFiles(false);
+      compactFilesToggle.focus({preventScroll:true});
+    }
+  });
+  return {renderFiles,updateFileBadges,renderOutline,reveal,scrollToCurrent};
 }

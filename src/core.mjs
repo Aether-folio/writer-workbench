@@ -17,7 +17,7 @@ export function quoteChatMessage(text,instruction,title='未命名草稿',path='
   const quote=draftMessage(text,title);
   if(typeof instruction!=='string' || !instruction.trim())throw new Error('请填写希望 AI 如何处理这段内容。');
   if(instruction.trim().length>4000)throw new Error('对话内容过长，最多 4000 个字符。');
-  return {role:'user',content:[{type:'text',text:`【码字工作台 · 选区对话】\n文稿：${path || title+'（草稿）'}\n\n原文：\n${text.split('\n').map(line=>'> '+line).join('\n')}\n\n我的要求：\n${instruction.trim()}`}],_meta:{...quote._meta,'openai/message':{target:'active',send:true}}};
+  return {role:'user',content:[{type:'text',text:`【递笔工作台 · 选区对话】\n文稿：${path || title+'（草稿）'}\n\n原文：\n${text.split('\n').map(line=>'> '+line).join('\n')}\n\n我的要求：\n${instruction.trim()}`}],_meta:{...quote._meta,'openai/message':{target:'active',send:true}}};
 }
 
 export function annotationBatchMessage(annotations) {

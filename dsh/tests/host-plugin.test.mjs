@@ -73,7 +73,7 @@ test('open_workbench bumps the client-open counter', async () => {
     assert.equal(result.opened, true);
     assert.equal(result.storageFolder, '码字工作台');
     assert.equal(typeof result.delivered, 'boolean');
-    assert.match(result.message, /码字工作台/);
+    assert.match(result.message, /递笔工作台/);
 
     const rendered = open.output.render({}, result);
     assert.equal(rendered[0].type, 'text');
@@ -93,7 +93,7 @@ test('workbench_status reads the configured workspace without editing it', async
     assert.equal(result.workNames, '测试作品');
 
     const rendered = status.output.render({}, result);
-    assert.match(rendered[0].text, /码字工作台/);
+    assert.match(rendered[0].text, /递笔工作台/);
     assert.match(rendered[0].text, /文稿：1 个/);
   });
 });
