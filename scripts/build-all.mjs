@@ -12,6 +12,7 @@ const runtime=resolve(root,'runtime');await mkdir(resolve(runtime,'dist'),{recur
 for(const file of ['server.mjs','editor.html'])await copyFile(resolve(root,'dist',file),resolve(runtime,'dist',file));
 for(const dir of ['.codex-plugin','skills'])await cp(resolve(root,dir),resolve(runtime,dir),{recursive:true});
 await mkdir(resolve(runtime,'assets'),{recursive:true});await copyFile(resolve(root,'assets/icon.svg'),resolve(runtime,'assets/icon.svg'));
+await cp(resolve(root,'assets/fonts'),resolve(runtime,'assets/fonts'),{recursive:true});
 await copyFile(resolve(root,'.mcp.json'),resolve(runtime,'.mcp.json'));
 const configured=spawnSync(process.execPath,[resolve(root,'scripts/configure-local.mjs')],{cwd:root,stdio:'inherit'});
 if(configured.error)throw configured.error;if(configured.status!==0)process.exit(configured.status || 1);

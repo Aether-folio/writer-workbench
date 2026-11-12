@@ -32,7 +32,7 @@ async function main(){
     assert.ok(g.panelParent.includes('files-sidebar'),'统计面板应固定在文稿侧栏');
     assert.ok(g.panel.x>=g.sidebar.x && g.panel.x+g.panel.width<=g.sidebar.x+g.sidebar.width+1,'统计面板不能超出侧栏');
     assert.equal(Math.round(g.document.x-(g.sidebar.x+g.sidebar.width)),Math.round(g.resizer.width));
-    assert.equal(g.document.width,1512-262-22-48);
+    assert.equal(g.document.width,1512-g.sidebar.width-22-48);
     assert.notEqual(g.panelCursor,'grab','固定在侧栏时不应表现为可拖动的浮窗');
 
     // 2. 侧栏打开时拖不动：按住卡片顶部拖到正文上，仍然留在侧栏。
@@ -167,6 +167,49 @@ async function main(){
     assert.equal(minimum.cellsFit,true,'最小宽度下数字不能被裁切或重叠');
     assert.equal(minimum.panelOverflow,false);
     await frame.locator('#stats-float').screenshot({path:resolve(__dirname,'../test-results/docked-minimum.png')});
+
+    const coverChoice=frame.locator('[data-stats-option="cover"]');
+    await frame.locator('#stats-settings').click();
+    await coverChoice.check();
+    await frame.locator('#stats-settings-save').click();
+    const cover=frame.locator('#stats-cover-block'),pet=frame.locator('#stats-pet-stage');
+    await cover.waitFor();
+    const box=await cover.boundingBox(),media=await frame.locator('#stats-media').boundingBox();
+    assert.ok(Math.abs(box.x+box.width/2-media.x-media.width/2)<2,'窄侧栏封面应居中');
+    assert.equal(await frame.locator('#stats-head #stats-pet-stage').count(),1);
+    await frame.locator('#sidebar-resizer').press('End');
+    await frame.locator('#stats-media #stats-pet-stage').waitFor();
+    assert.ok((await pet.boundingBox()).x>(await cover.boundingBox()).x,'左侧栏萌宠在封面右边');
+    const resizer=frame.locator('#sidebar-resizer');
+    const capped=await geometry(frame);
+    assert.equal(capped.sidebar.width,Number(await resizer.getAttribute('aria-valuemax')));
+    const spare=await frame.locator('#stats-media').evaluate(el=>el.clientWidth
+      - el.querySelector('#stats-cover-block').offsetWidth
+      - el.querySelector('#stats-pet-stage').offsetWidth
+      - parseFloat(getComputedStyle(el).columnGap));
+    assert.ok(spare>=0&&spare<=1,'最大宽度只留够封面、间距和萌宠');
+    await resizer.press('ArrowRight');
+    assert.equal((await geometry(frame)).sidebar.width,capped.sidebar.width);
+    const bar=await resizer.boundingBox();
+    await page.mouse.move(bar.x+bar.width/2,bar.y+50);
+    await page.mouse.down();
+    await page.mouse.move(bar.x+200,bar.y+50,{steps:4});
+    await page.mouse.up();
+    assert.equal((await geometry(frame)).sidebar.width,capped.sidebar.width);
+    assert.deepEqual(await head.evaluate(el=>{
+      const style=getComputedStyle(el);
+      return [style.backgroundColor,style.backgroundImage];
+    }),['rgba(0, 0, 0, 0)','none']);
+    await frame.locator('#appearance-open').click();
+    await frame.locator('#settings-tab-layout').click();
+    await frame.locator('#sidebar-side').selectOption('right');
+    assert.ok((await pet.boundingBox()).x<(await cover.boundingBox()).x,'右侧栏萌宠在封面左边');
+    await frame.locator('#sidebar-side').selectOption('left');
+    await frame.locator('#appearance-close').click();
+    await frame.locator('#stats-settings').click();
+    await coverChoice.uncheck();
+    await frame.locator('#stats-settings-save').click();
+    await cover.waitFor({state:'hidden'});
 
     // 10. 窄窗：按需打开文稿抽屉，正文和抽屉均不产生横向溢出。
     const narrowHeight=()=>editor.evaluate(el=>({

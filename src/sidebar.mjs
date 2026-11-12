@@ -1,3 +1,5 @@
+import {statsMediaWidth} from './stats-media.mjs';
+
 const chineseDigits={'零':0,'〇':0,'一':1,'二':2,'两':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9};
 const chineseUnits={'十':10,'百':100,'千':1000,'万':10000,'亿':100000000};
 
@@ -25,7 +27,7 @@ function ordinalSortKey(name) {
     .replace(/^(\s*[卷部集篇]\s*)([0-9零〇一二两三四五六七八九十百千万亿]+)(?=$|[\s._、:：-])/,(_,prefix,number)=>prefix+ordinalNumber(number));
 }
 
-export function fileTree(files,directories=[]) {
+export function fileTree(files,directories=[],chapterOrders={}) {
   const root=new Map();
   for(const file of [...directories.map(folder=>({...folder,directory:true})),...files]) {
     const parts=file.path.split('/');let branch=root,prefix='';
@@ -35,9 +37,24 @@ export function fileTree(files,directories=[]) {
       branch=branch.get(name).children;
     }
   }
-  const priority = node => !node.children ? 2 : node.name === '正文' ? 0 : 1;
-  const sort=branch=>[...branch.values()].sort((a,b)=>priority(a)-priority(b) || ordinalSortKey(a.name).localeCompare(ordinalSortKey(b.name),'zh-CN',{numeric:true}) || a.name.localeCompare(b.name,'zh-CN',{numeric:true})).map(node=>({...node,...(node.children?{children:sort(node.children)}:{})}));
+  const folderOrder=new Map([['正文',0],['设定',1],['草稿',2]]);
+  function sort(branch,order=null) {
+    const workFolders=branch.get('正文')?.children && branch.get('设定')?.children;
+    const priority=node=>!node.children ? 4 : workFolders ? (folderOrder.get(node.name) ?? 3) : node.name==='正文' ? 0 : 3;
+    return [...branch.values()]
+      .sort((a,b)=>priority(a)-priority(b) || (order==='desc'?-1:1)*compareChapterNames(a.name,b.name))
+      .map(node=>{
+        if(!node.children)return node;
+        const inherited=node.name==='正文'?'desc':order;
+        const childOrder=inherited&&Object.hasOwn(chapterOrders,node.path)?chapterOrders[node.path]:inherited;
+        return {...node,chapterOrder:childOrder,children:sort(node.children,childOrder)};
+      });
+  }
   return sort(root);
+}
+
+export function compareChapterNames(a,b) {
+  return ordinalSortKey(a).localeCompare(ordinalSortKey(b),'zh-CN',{numeric:true}) || a.localeCompare(b,'zh-CN',{numeric:true});
 }
 
 export function documentHeadings(body) {
@@ -64,9 +81,9 @@ export function documentHeadings(body) {
   return headings;
 }
 
-export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRenameFolder,onSelectFolder,showEditor}) {
+export function attachSidebar({onOpen,onDelete,onCreate,onCreateVolume,onOrder,onRename,onRenameFolder,onSelectFolder}) {
   const $=id=>document.getElementById(id),openFolders=new Set();
-  let currentPath='',outlineTimer;
+  let currentPath='';
   const fileStem=name=>name.replace(/\.(md|txt)$/i,'');
   function startRename(row,button,node) {
     if(typeof onRename!=='function') return;
@@ -127,7 +144,13 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     const folder=target.kind==='folder';
     for(const button of menu.querySelectorAll('button[data-action]')) {
       const action=button.dataset.action;
+      if(action==='asc'||action==='desc'){
+        button.hidden=!target.order;
+        button.setAttribute('aria-checked',String(target.order===action));
+        continue;
+      }
       button.hidden=folder ? !['rename','create'].includes(action) : !['open','rename','delete'].includes(action);
+      if(action==='create')button.textContent=target.volumeRoot?'在此新建卷':'在此新建文稿';
     }
     menu.hidden=false;menu.style.left='0px';menu.style.top='0px';
     const bounds=menu.getBoundingClientRect();
@@ -143,8 +166,9 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
       closeFileMenu();
       if(action==='open')onOpen(target.path);
       else if(action==='rename')target.rename();
-      else if(action==='create')onCreate(target.path);
+      else if(action==='create')(target.volumeRoot?onCreateVolume:onCreate)(target.path);
       else if(action==='delete')onDelete(target.path);
+      else if(action==='asc'||action==='desc')onOrder(target.sortPath,action);
     });
     menu.addEventListener('keydown',event=>{
       if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
@@ -181,10 +205,10 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
       else button.removeAttribute('aria-label');
     }
   }
-  function renderFiles(files,path,directories=[],unreadFiles=new Set(),pendingFiles=new Set()) {
+  function renderFiles(files,path,directories=[],unreadFiles=new Set(),pendingFiles=new Set(),wordTotals={},chapterOrders={}) {
     const changed=path!==currentPath;currentPath=path;
     const list=$('file-list');list.replaceChildren();
-    function append(nodes,parent) {
+    function append(nodes,parent,chapterFolder=null) {
       for(const node of nodes) {
         if(node.children) {
           const folder=document.createElement('details');folder.className='file-folder';folder.dataset.path=node.path;
@@ -192,21 +216,36 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
           folder.open=openFolders.has(node.path);
           const heading=document.createElement('summary');heading.title=node.path+'\n右键重命名（F2）';
           const label=document.createElement('span');label.className='folder-name';label.textContent=node.name;heading.append(label);
+          if(Object.hasOwn(wordTotals,node.path)){
+            const words=wordTotals[node.path],total=document.createElement('span');total.className='folder-word-total';
+            total.textContent=words===null?'— 字':words.toLocaleString('zh-CN')+' 字';
+            total.title=words===null?'部分正文无法读取，暂不能统计总字数':'正文总字数：'+total.textContent;
+            total.setAttribute('aria-label',total.title);heading.append(total);
+          }
           heading.addEventListener('click',()=>onSelectFolder(node.path));
-          heading.addEventListener('contextmenu',event=>{event.preventDefault();closeFileMenu();showFileMenu(event.clientX,event.clientY,{kind:'folder',path:node.path,rename:()=>startFolderRename(heading,label,node)});});
+          const volumeRoot=node.name==='正文'&&node.path.split('/').length===2;
+          heading.addEventListener('contextmenu',event=>{
+            event.preventDefault();closeFileMenu();
+            showFileMenu(event.clientX,event.clientY,{kind:'folder',path:node.path,volumeRoot,sortPath:node.path,order:node.chapterOrder,rename:()=>startFolderRename(heading,label,node)});
+          });
           heading.addEventListener('keydown',event=>{if(event.key==='F2'){event.preventDefault();startFolderRename(heading,label,node);}});
-          const create=document.createElement('button');create.type='button';create.className='folder-create icon-button';create.textContent='＋';create.title='在此文件夹新建文稿';create.setAttribute('aria-label',`在 ${node.path} 新建文稿`);
-          create.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();onCreate(node.path);});
+          const create=document.createElement('button');create.type='button';create.className='folder-create icon-button';create.textContent='＋';
+          const createLabel=volumeRoot?'新建卷':'新建文稿';
+          create.title=createLabel;create.setAttribute('aria-label',`在 ${node.path} ${createLabel}`);
+          create.addEventListener('click',event=>{event.preventDefault();event.stopPropagation();(volumeRoot?onCreateVolume:onCreate)(node.path);});
           const children=document.createElement('div');children.className='folder-children';
           // Keep summary as the first child for native disclosure and keyboard support.
-          heading.append(create);folder.append(heading,children);parent.append(folder);append(node.children,children);
+          heading.append(create);folder.append(heading,children);parent.append(folder);append(node.children,children,node.chapterOrder?node:null);
           folder.addEventListener('toggle',()=>{if(folder.isConnected){if(folder.open)openFolders.add(node.path);else openFolders.delete(node.path);}});
         } else {
           const row=document.createElement('div');row.className='file-row';
           const button=document.createElement('button');button.type='button';button.className='file-entry';button.textContent=node.name;button.title=node.path+'\n右键重命名（F2）';button.setAttribute('aria-current',String(node.path===path));
           button.dataset.path=node.path;
           button.addEventListener('click',()=>onOpen(node.path));
-          button.addEventListener('contextmenu',event=>{event.preventDefault();closeFileMenu();showFileMenu(event.clientX,event.clientY,{kind:'file',path:node.path,rename:()=>startRename(row,button,node)});});
+          button.addEventListener('contextmenu',event=>{
+            event.preventDefault();closeFileMenu();
+            showFileMenu(event.clientX,event.clientY,{kind:'file',path:node.path,sortPath:chapterFolder?.path,order:chapterFolder?.chapterOrder,rename:()=>startRename(row,button,node)});
+          });
           button.addEventListener('keydown',event=>{if(event.key==='F2'){event.preventDefault();startRename(row,button,node);}});
           const remove=document.createElement('button');remove.type='button';remove.className='file-delete icon-button';remove.setAttribute('aria-label',`删除 ${node.name}`);remove.title='移至回收站';
           remove.innerHTML='<svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M3.5 5.5h13M7 5.5V3h6v2.5M5 5.5l.7 11h8.6l.7-11M8 8v6m4-6v6"/></svg>';
@@ -214,68 +253,49 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
         }
       }
     }
-    append(fileTree(files,directories),list);
+    append(fileTree(files,directories,chapterOrders),list);
     updateFileBadges(unreadFiles,pendingFiles);
     if(changed) scrollToCurrent();
     $('files-status').textContent=files.length ? '' : '暂无文稿，可在文件夹旁点击 ＋ 新建。';
     $('files-status').hidden=Boolean(files.length);
   }
-  function jumpTo(heading) {
-    showEditor();editor.focus();editor.setSelectionRange(heading.start,heading.start);
-    if(editor.scrollSelectionIntoView){editor.scrollSelectionIntoView();editor.dispatchEvent(new Event('select'));return;}
-    const measure=document.createElement('div'),style=getComputedStyle(editor);
-    for(const property of ['fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing','tabSize','padding','boxSizing','wordBreak','overflowWrap']) measure.style[property]=style[property];
-    Object.assign(measure.style,{position:'fixed',visibility:'hidden',whiteSpace:'pre-wrap',overflowWrap:'break-word',width:editor.clientWidth+'px'});
-    measure.textContent=editor.value.slice(0,heading.start);
-    const marker=document.createElement('span');marker.textContent='\u200b';measure.append(marker);document.body.append(measure);
-    editor.scrollTop=Math.max(0,marker.offsetTop-parseFloat(style.paddingTop)-24);measure.remove();
-    editor.dispatchEvent(new Event('select'));
-    for(const item of $('outline-list').children) item.setAttribute('aria-current',String(Number(item.dataset.start)===heading.start));
-  }
-  function renderOutline() {
-    const list=$('outline-list'),headings=documentHeadings(editor.value);list.replaceChildren();
-    const base=Math.min(...headings.map(heading=>heading.level));
-    for(const heading of headings) {
-      const button=document.createElement('button');button.type='button';button.className='outline-entry';button.textContent=heading.text;button.title=heading.text;button.dataset.start=heading.start;button.style.setProperty('--depth',heading.level-base);
-      button.addEventListener('click',()=>jumpTo(heading));list.append(button);
-    }
-    $('outline-status').textContent=headings.length ? `${headings.length} 个标题` : '使用 Markdown 标题（如 # 第一章），即可生成大纲。';
-  }
-  function switchTab(name,focus=false) {
-    for(const value of ['files','outline']) {
-      const selected=value===name,tab=$(`sidebar-${value}-tab`);
-      tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;$(`sidebar-${value}-panel`).hidden=!selected;
-      if(selected && focus)tab.focus();
-    }
-    if(name==='outline')renderOutline();
-  }
-  for(const value of ['files','outline']) {
-    const tab=$(`sidebar-${value}-tab`);tab.addEventListener('click',()=>switchTab(value));
-    tab.addEventListener('keydown',event=>{
-      if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) {
-        event.preventDefault();switchTab(event.key==='Home'?'files':event.key==='End'?'outline':value==='files'?'outline':'files',true);
-      }
-    });
-  }
-  editor.addEventListener('input',()=>{clearTimeout(outlineTimer);if(!$('sidebar-outline-panel').hidden)outlineTimer=setTimeout(renderOutline,180);});
   /** 打开作品时展开对应文件夹，避免它此前被手动收起后仍保持折叠。 */
   function reveal(folderPath) {if(typeof folderPath==='string' && folderPath)openFolders.add(folderPath);}
   function initSidebarResize() {
     const shell=document.querySelector('.workspace-shell'),pane=$('workbench-sidebar'),handle=$('sidebar-resizer');
     if(!shell || !pane || !handle) return;
-    const KEY='writer-workbench:sidebar-width',MIN=220,MAX=560,STEP=16;
+    const root=document.documentElement,panel=$('stats-float'),media=$('stats-media');
+    const cover=$('stats-cover-block'),petImage=$('stats-pet-image'),statsPanel=panel.querySelector('.stats-panel');
+    const KEY='writer-workbench:sidebar-width',MIN=220,STEP=16;
+    let limit=248,gutter=0;
     let stored=0;
     try {const value=Number(localStorage.getItem(KEY));if(Number.isFinite(value)&&value>=MIN)stored=value;} catch {}
-    const maxWidth=()=>shell.clientWidth>0 ? Math.max(MIN,Math.min(MAX,shell.clientWidth-360)) : MAX;
-    const clampWidth=value=>Math.round(Math.max(MIN,Math.min(maxWidth(),value)));
     const paneWidth=()=>pane.getBoundingClientRect().width || MIN;
+    const sum=(style,...keys)=>keys.reduce((total,key)=>total+(parseFloat(style[key])||0),0);
+    function updateLimit() {
+      if(!panel.classList.contains('is-detached')){
+        const frame=getComputedStyle(panel),sidebar=getComputedStyle(pane);
+        const panelBorder=sum(frame,'borderLeftWidth','borderRightWidth');
+        if(panel.offsetWidth)gutter=Math.max(0,panel.offsetWidth-panel.clientWidth-panelBorder);
+        const width=statsMediaWidth(cover,petImage,media)+gutter+panelBorder
+          + sum(frame,'marginLeft','marginRight')
+          + sum(getComputedStyle(statsPanel),'paddingLeft','paddingRight')
+          + sum(sidebar,'borderLeftWidth','borderRightWidth');
+        if(Number.isFinite(width))limit=Math.max(MIN,Math.min(Math.ceil(width),shell.clientWidth?shell.clientWidth-360:Infinity));
+      }
+      const cssLimit=limit+'px';
+      if(root.style.getPropertyValue('--wb-sidebar-limit')!==cssLimit)root.style.setProperty('--wb-sidebar-limit',cssLimit);
+      handle.setAttribute('aria-valuemax',String(limit));
+      handle.setAttribute('aria-valuenow',String(Math.min(limit,Math.round(paneWidth()))));
+    }
+    const clampWidth=value=>Math.round(Math.max(MIN,Math.min(limit,value)));
     // 侧栏放到正文右边时，分隔条在左侧，向左拖才是变宽。
     const onRight=()=>document.body.dataset.sidebarSide==='right';
     // 同步到根元素，工作台外框（#writing-desk）按「侧栏 + 正文宽度」计算最大宽度。
-    const apply=value=>{const width=clampWidth(value);shell.style.setProperty('--wb-sidebar-width',width+'px');document.documentElement.style.setProperty('--wb-sidebar-width',width+'px');handle.setAttribute('aria-valuenow',String(width));return width;};
+    const apply=value=>{const width=clampWidth(value);root.style.setProperty('--wb-sidebar-width',width+'px');handle.setAttribute('aria-valuenow',String(width));return width;};
     const remember=value=>{try {localStorage.setItem(KEY,String(value));} catch {}};
-    const custom=()=>shell.style.getPropertyValue('--wb-sidebar-width')!=='';
-    if(stored)apply(stored);else handle.setAttribute('aria-valuenow',String(Math.round(paneWidth())));
+    if(stored)root.style.setProperty('--wb-sidebar-width',Math.round(stored)+'px');
+    updateLimit();
     let drag=null;
     handle.addEventListener('pointerdown',event=>{
       if(event.button!==0)return;
@@ -297,15 +317,19 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
     };
     handle.addEventListener('pointerup',endDrag);
     handle.addEventListener('pointercancel',endDrag);
-    handle.addEventListener('dblclick',()=>{shell.style.removeProperty('--wb-sidebar-width');document.documentElement.style.removeProperty('--wb-sidebar-width');stored=0;try {localStorage.removeItem(KEY);} catch {}handle.setAttribute('aria-valuenow',String(Math.round(paneWidth())));});
+    handle.addEventListener('dblclick',()=>{root.style.removeProperty('--wb-sidebar-width');try {localStorage.removeItem(KEY);} catch {}updateLimit();});
     handle.addEventListener('keydown',event=>{
       if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
       event.preventDefault();
       const delta=event.key==='ArrowLeft'?-STEP:STEP;
-      const next=event.key==='Home'?MIN:event.key==='End'?MAX:paneWidth()+(onRight()?-delta:delta);
+      const next=event.key==='Home'?MIN:event.key==='End'?limit:paneWidth()+(onRight()?-delta:delta);
       remember(apply(next));
     });
-    window.addEventListener('resize',()=>{if(custom())apply(paneWidth());});
+    window.addEventListener('resize',updateLimit);
+    document.addEventListener('workbench:stats-layout',updateLimit);
+    const observer=new ResizeObserver(updateLimit);
+    observer.observe(pane);
+    observer.observe($('stats-content'));
   }
   initSidebarResize();
   const compactFilesToggle=$('compact-files-toggle');
@@ -326,5 +350,5 @@ export function attachSidebar({editor,onOpen,onDelete,onCreate,onRename,onRename
       compactFilesToggle.focus({preventScroll:true});
     }
   });
-  return {renderFiles,updateFileBadges,renderOutline,reveal,scrollToCurrent};
+  return {renderFiles,updateFileBadges,reveal,scrollToCurrent};
 }

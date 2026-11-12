@@ -8,7 +8,7 @@
  * 不修改 Codex 的 package.json / dist/server.mjs / .codex-plugin。
  */
 import {build} from 'esbuild';
-import {copyFile, mkdir, readFile, stat} from 'node:fs/promises';
+import {copyFile, cp, mkdir, readFile, stat} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -67,6 +67,7 @@ await build({
 
 await copyFile(editorSource, resolve(root, 'assets', 'editor.html'));
 await copyFile(iconSource, resolve(root, 'assets', 'icon.svg'));
+await cp(resolve(parent,'assets/fonts'),resolve(root,'assets/fonts'),{recursive:true});
 
 console.log(`Built dsh-writer-workbench ${manifest.version}`);
 console.log(`  lib/index.js  (${(await stat(resolve(root, 'lib', 'index.js'))).size} bytes)`);

@@ -6,15 +6,15 @@ export const glassPalettes={
   mint:{name:'青梨绿',base:'#eef4e8',glow:'#d4e5be',secondary:'#d8eade',accent:'#41643e',ink:'#303c2c',muted:'#54654d',light:true},
   peach:{name:'杏仁奶',base:'#faf3e9',glow:'#eed9bd',secondary:'#f3e0da',accent:'#805334',ink:'#41362e',muted:'#6b584a',light:true},
   silver:{name:'云朵白',base:'#f1f4f6',glow:'#dbe4ec',secondary:'#e3eaef',accent:'#46617a',ink:'#303a44',muted:'#556371',light:true},
-  midnight:{name:'暮夜灰',base:'#282f3a',glow:'#44566a',secondary:'#454553',accent:'#bfd9f0',ink:'#edf1f6',muted:'#bac5d4'}
+  midnight:{name:'暮夜灰',base:'#000000',glow:'#303030',secondary:'#151515',accent:'#adadad',ink:'#bfbfbf',muted:'#989898'}
 };
 
 export function glassPalette(key){return glassPalettes[key] || glassPalettes.glacier;}
 
 export function glassTokens(key,frost=70){
   const p=glassPalette(key),amount=Math.max(40,Math.min(90,Number(frost)||70));
-  const paper=`color-mix(in srgb, ${p.base} ${p.light?24:82}%, ${p.light?'white':'#1d2430'})`;
-  const line=`color-mix(in srgb, ${p.ink} ${p.light?15:22}%, transparent)`;
+  const paper=p.light?`color-mix(in srgb, ${p.base} 24%, white)`:'#1c1c1c';
+  const line=`color-mix(in srgb, ${p.ink} ${p.light?15:18}%, transparent)`;
   return {
     'glass-base':p.base,'glass-glow':p.glow,'glass-secondary':p.secondary,
     'glass-blur':`${Math.round(12+amount*.28)}px`,'glass-opacity':`${Math.round(26+amount*.28)}%`,

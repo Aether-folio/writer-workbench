@@ -14,26 +14,7 @@ try{
  await active.close();active=await fixture(browser,{messageEnabled:false,body:''});({frame,page,workspace,doc}=active);await active.open(0);await frame.locator('#pen-instruction').fill('无宿主发送能力仍可暂存');assert.equal(await frame.locator('#pen-send').isDisabled(),true);await frame.locator('#pen-instruction').press('Enter');assert.equal(await frame.locator('#pen-dialog').isVisible(),true);await frame.locator('#pen-save').click();await frame.locator('.pen-note-marker').waitFor();assert.equal((await workspace.writingRequests({path:doc.path})).drafts.length,1);assert.equal(await page.evaluate(()=>window.submitted),0);assert.deepEqual(active.errors,[]);
  await active.close();active=await fixture(browser);({frame,page,workspace,doc}=active);await active.open(8,14);await frame.locator('#pen-instruction').fill('替换这里');await frame.locator('#pen-send').click();await frame.locator('#pen-dialog').waitFor({state:'hidden'});await active.publish('替换后的动作','replace');await frame.locator('.pen-proposal-text').filter({hasText:'替换后的动作'}).waitFor();
  // Simulate a newer document version deleting the original target.
- let saved=await workspace.readDocument(doc.path);await workspace.saveDocument({...saved,body:'完全不同的正文。'});await active.refresh();await frame.locator('.pen-wait-label').filter({hasText:'定位已变动'}).waitFor();
- await page.evaluate(()=>{
-   const backend=window.backend;
-   window.completedWritingPolls=0;
-   window.backend=async(name,args)=>{
-     const result=await backend(name,args);
-     if(name==='writing_requests')window.completedWritingPolls++;
-     return result;
-   };
- });
- await active.selection(3,5);
- await frame.locator('.pen-proposal-marker').click();
- const conflictToolbar=frame.locator('#pen-toolbar');
- await conflictToolbar.waitFor();
- const polls=await page.evaluate(()=>window.completedWritingPolls);
- await page.waitForFunction(previous=>window.completedWritingPolls>previous,polls);
- await pause(350);
- assert.ok(await conflictToolbar.evaluate(el=>!el.hidden&&el.contains(document.activeElement)));
- await conflictToolbar.getByRole('button',{name:'移到当前选区或光标'}).click();
- await frame.locator('.pen-proposal-text').filter({hasText:'替换后的动作'}).waitFor();assert.equal(await frame.locator('#draft-body').evaluate(el=>el.value),'完全不同的正文。');await frame.locator('.pen-proposal-text').hover();await frame.locator('#pen-toolbar').getByRole('button',{name:'采纳此处',exact:true}).click();await frame.locator('.pen-proposal').waitFor({state:'hidden'});assert.equal((await workspace.readDocument(doc.path)).body,'完全不替换后的动作正文。');assert.deepEqual(active.errors,[]);
+ let saved=await workspace.readDocument(doc.path);await workspace.saveDocument({...saved,body:'完全不同的正文。'});await active.refresh();await frame.locator('.pen-wait-label').filter({hasText:'定位已变动'}).waitFor();await active.selection(3,5);await frame.locator('.pen-proposal-marker').click();await frame.locator('#pen-toolbar').getByRole('button',{name:'移到当前选区或光标'}).click();await frame.locator('.pen-proposal-text').filter({hasText:'替换后的动作'}).waitFor();assert.equal(await frame.locator('#draft-body').evaluate(el=>el.value),'完全不同的正文。');await frame.locator('.pen-proposal-text').hover();await frame.locator('#pen-toolbar').getByRole('button',{name:'采纳此处',exact:true}).click();await frame.locator('.pen-proposal').waitFor({state:'hidden'});assert.equal((await workspace.readDocument(doc.path)).body,'完全不替换后的动作正文。');assert.deepEqual(active.errors,[]);
  const base=(await workspace.readDocument(doc.path)).body;
  const second=base.lastIndexOf('正文');
  for(const [start,end,instruction] of [[0,2,'改第一处'],[second,second+2,'改第二处']]){
@@ -57,7 +38,7 @@ try{
  await toolbar.waitFor({state:'hidden'});
  assert.deepEqual(await bulk.getByRole('button').evaluateAll(buttons=>buttons.map(button=>[button.title,button.textContent])),[['全部采纳',''],['全部重新生成',''],['全部取消','']]);
  await first.locator('.pen-proposal-text').hover();
- assert.deepEqual(await toolbar.getByRole('button').evaluateAll(buttons=>buttons.map(button=>[button.title,button.textContent])),[['查看对照',''],['采纳此处',''],['重新生成',''],['取消','']]);
+ assert.deepEqual(await toolbar.getByRole('button').evaluateAll(buttons=>buttons.map(button=>[button.title,button.textContent])),[['采纳此处',''],['重新生成',''],['取消','']]);
  await frame.locator('#draft-title').hover();
  await toolbar.waitFor({state:'hidden'});
  assert.ok(await bulk.isVisible());

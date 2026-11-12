@@ -18,19 +18,28 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   const appearance=attachAppearance({callTool,notify});
   const applyAppearance=appearance.apply,adjustFontSize=appearance.adjustFontSize;
   let added=0,seenActive=0,seenIdle=0,statsSaving=null,statsVersion=0,savedStatsVersion=0,lastFlush=Date.now();
-  let directoryList=[],workList=[],worksReady=false,selectedFolder='',newFolder='',statsPreferencesReady=false,lastStatsContext=null;
+  let wordTotals={},directoryList=[],workList=[],worksReady=false,selectedFolder='',newFolder='',statsPreferencesReady=false,lastStatsContext=null;
   let shelfCovers=new Map(),shelfCoversGeneration=0,shelfReady=false,draftInfo={title:'未命名草稿',body:''};
   let workDialogMode='add',workRenameTarget='',shelfMenuTarget=null,shelfMenuAnchor=null,coverTarget='',shelfStatusTimer;
+  let volumeWork='';
   const pendingCovers=new Set();
   const records=new Map(),knownRevisions=new Map(),unreadFiles=new Set();
   let pendingWritingFiles=new Set();
   let fileScanVersion=0,diskRefresh=null,reportedConflict=null,lastWorkspaceDirectories;
   let pendingDelete=null,deleteGeneration=0,trashReady=false,trashBusy=false,pendingTrash=null;
   let finishStatus='';
-  const sidebar=attachSidebar({editor,onOpen:openDocument,onDelete:requestDelete,onCreate:folder=>openNameDialog('blank',folder),onRename:(filePath,name)=>renameFile(filePath,name),onRenameFolder:(folderPath,name)=>renameFolder(folderPath,name),onSelectFolder:folder=>{selectedFolder=folder;updateStatsWork();},showEditor});
+  function currentWork(){
+    const location=path||selectedFolder;
+    return workList.find(item=>location===item.path||location.startsWith(item.path+'/'));
+  }
+  const sidebar=attachSidebar({
+    onOpen:openDocument,onDelete:requestDelete,onCreate:folder=>openNameDialog('blank',folder),
+    onCreateVolume:openVolumeDialog,onOrder:(folder,order)=>{appearance.setChapterOrder(folder,order);renderFiles();},
+    onRename:renameFile,onRenameFolder:renameFolder,
+    onSelectFolder:folder=>{selectedFolder=folder;updateStatsWork();},
+  });
   function updateStatsWork() {
-    const location=path || selectedFolder;
-    const work=workList.find(item=>location===item.path || location.startsWith(item.path+'/'));
+    const work=currentWork();
     const name=work ? `《${work.name.replace(/^《(.*)》$/,'$1')}》` : '未选择作品';
     $('stats-work').textContent=name;$('stats-work').title=name;
     const head=$('stats-head');if(head && head.hasAttribute('role'))head.setAttribute('aria-label',`移动码字统计，${name}，使用方向键移动`);
@@ -41,7 +50,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   }
   function acceptWorkspaceInfo(info) {
     lastWorkspaceDirectories=info.directories;
-    features=info.features||{};
+    features=info.features||{};wordTotals=info.wordTotals||{};
     fileList=info.files;directoryList=info.directories || [{name:'文稿',path:'文稿'}];workList=info.works || [];
     if(!fileList.some(file=>file.path.startsWith('文稿/')))directoryList=directoryList.filter(folder=>folder.path!=='文稿' && !folder.path.startsWith('文稿/'));
     trashReady=Boolean(info.features?.trash);worksReady=Boolean(info.features?.works);statsPreferencesReady=Boolean(info.features?.statsPreferences);
@@ -158,8 +167,35 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     const work=workList.find(item=>item.path===workPath);
     if(!work) {notify('没有找到这个作品，可能已被移动或删除。');await refreshFiles().catch(()=>{});return;}
     if(creating) return;
-    selectedFolder=work.path+'/正文';
+    const bodyFolder=work.path+'/正文';
+    selectedFolder=bodyFolder;
     sidebar.reveal(work.path);
+    if(features.volumes){
+      const hasFlat=fileList.some(file=>file.path.startsWith(bodyFolder+'/')&&!file.path.slice(bodyFolder.length+1).includes('/'));
+      const hasVolume=directoryList.some(folder=>folder.path.startsWith(bodyFolder+'/'));
+      if(hasFlat||!hasVolume){
+        const wasReadOnly=editor.readOnly;
+        creating=true;editor.readOnly=true;
+        try{
+          await flushDocument();
+          await rememberPosition();
+          await flushRecords();
+          const result=await callTool('prepare_work_volumes',{workPath});
+          const moved=result.moves.find(item=>item.from===path);
+          if(moved)path=moved.to;
+          if(result.firstVolume){selectedFolder=result.firstVolume;sidebar.reveal(bodyFolder);sidebar.reveal(selectedFolder);}
+          await refreshFiles();
+          if(result.conflicts.length)notify('第一卷有同名文稿，以下章节仍留在正文：'+result.conflicts.join('、'));
+        }catch(error){
+          shelfStatus('整理分卷未完成：'+error.message,'error');
+          return;
+        }finally{creating=false;editor.readOnly=wasReadOnly;}
+      }
+      if(selectedFolder===bodyFolder){
+        const volumes=directoryList.filter(folder=>folder.path.startsWith(bodyFolder+'/')&&!folder.path.slice(bodyFolder.length+1).includes('/'));
+        selectedFolder=volumes.find(folder=>folder.name==='第一卷')?.path||volumes[0]?.path||bodyFolder;
+      }
+    }
     // 刚从这个作品回到书架时，优先回到原来那篇；否则打开正文里最近更新的一篇。
     const current=path && path.startsWith(work.path+'/') ? fileList.find(file=>file.path===path) : null;
     const target=current || pickWorkDocument(fileList,work.path);
@@ -262,7 +298,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     }
   }
   function renderFiles() {
-    sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles);updateStatsWork();
+    sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles,wordTotals,appearance.chapterOrders);updateStatsWork();
   }
   function setPendingWritingPaths(paths,activeHasPending) {
     const next=Array.isArray(paths)?new Set(paths):new Set(pendingWritingFiles);
@@ -300,6 +336,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         || JSON.stringify(info.files)!==JSON.stringify(fileList)
         || JSON.stringify(info.directories)!==JSON.stringify(lastWorkspaceDirectories)
         || JSON.stringify(info.works||[])!==JSON.stringify(workList)
+        || JSON.stringify(info.wordTotals||{})!==JSON.stringify(wordTotals)
         || JSON.stringify(info.features||{})!==JSON.stringify(features)
         || (info.draft && (info.draft.title!==draftInfo.title || info.draft.body!==draftInfo.body));
       if(!automatic || changedList)acceptWorkspaceInfo(info);
@@ -463,7 +500,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     if(path)knownRevisions.set(path,revision);
     $('document-status').textContent=path ? '已打开 · '+path : '草稿已自动恢复';
     if(path)selectedFolder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'文稿';
-    renderFiles();sidebar.renderOutline();onLoaded();
+    renderFiles();onLoaded();
     documentChanged();
     if(position){editor.setSelectionRange(position.start,position.end,position.updateDOM);editor.scrollTop=position.scrollTop;return;}
     const loadedPath=path,version=editVersion;
@@ -485,7 +522,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       revision=result.document.revision || '';if(path)knownRevisions.set(path,revision);
       dirty=false;clearTimeout(saveTimeout);
       $('document-status').textContent=(action==='undo'?'已撤销采纳并保存':'已采纳并保存')+(path?' · '+path:'到草稿');
-      sidebar.renderOutline();onLoaded();documentChanged();
+      onLoaded();documentChanged();
       const receipt=result.request.acceptance;
       const caret=action==='accept'?(receipt?.start||0)+(receipt?.inserted??result.request.text).length:result.request.endOffset??result.request.offset;
       editor.focus({preventScroll:true});editor.setSelectionRange(caret);editor.scrollSelectionIntoView();
@@ -513,7 +550,7 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
         lastBody=editor.value;dirty=false;editVersion++;finishStatus='';
         selectedFolder=path.includes('/')?path.slice(0,path.lastIndexOf('/')):'文稿';
         $('document-status').textContent='已重命名 · '+path;
-        sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles);sidebar.renderOutline();updateStatsWork();onLoaded();
+        renderFiles();onLoaded();
         documentChanged();
       }
       notify(`已重命名为“${result.document.title}”。`);
@@ -548,13 +585,14 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
       if(!folderPath.includes('/')) shelfCovers.clear();
       await refreshFiles();
       const nextPath=result.folder.path;
+      appearance.moveChapterOrders(folderPath,nextPath);
       if(inside) {
         path=nextPath+path.slice(folderPath.length);
         $('document-status').textContent='已重命名 · '+path;
       }
       if(selectedFolder===folderPath || selectedFolder.startsWith(folderPath+'/')) selectedFolder=nextPath+selectedFolder.slice(folderPath.length);
-      if(inside) {sidebar.renderFiles(fileList,path,directoryList,unreadFiles,pendingWritingFiles);sidebar.renderOutline();onLoaded();documentChanged();}
-      updateStatsWork();
+      renderFiles();
+      if(inside){onLoaded();documentChanged();}
       notify(`文件夹已重命名为“${result.folder.name}”。`);
       return result.folder;
     } catch(error) {
@@ -570,18 +608,20 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     renamingTitle=true;
     titleCommit=renameFile(path,next).catch(()=>{title.value=titleSnapshot;}).finally(()=>{renamingTitle=false;titleCommit=null;});
   }
-  async function openDocument(filePath) {
+  async function openDocument(filePath,{shouldOpen=()=>true}={}) {
     if(titleCommit) await titleCommit.catch(()=>{});
-    if(creating) return;
+    if(creating||!shouldOpen()) return false;
     creating=true;editor.readOnly=true;
     try {
       await rememberPosition().catch(()=>notify('阅读位置未保存，正文仍可正常打开。'));clearTimeout(saveTimeout);pauseClock();await flushDocument();await flushRecords();
       const document=await callTool('read_document',{path:filePath});
+      if(!shouldOpen())return false;
       unreadFiles.delete(filePath);
       if(filePath===path && document.revision===revision && externalChanges)renderFiles();
       else loadDocument(document);
       showEditor();
-    } catch(error) {notify(error.message);}
+      return true;
+    } catch(error) {notify(error.message);return false;}
     finally {creating=false;editor.readOnly=false;}
   }
   function showEditor() {
@@ -617,6 +657,30 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
     $('document-dialog-heading').textContent=mode==='blank' ? '新建文稿' : '保存为文稿';
     $('document-name').value=mode==='current' && title.value!=='未命名草稿' ? title.value+'.md' : '';
     $('document-error').textContent='';$('document-dialog').showModal();$('document-name').focus();
+  }
+  function openVolumeDialog(bodyFolder) {
+    if(creating)return;
+    volumeWork=bodyFolder.slice(0,-'/正文'.length);
+    $('volume-name').value='';
+    $('volume-error').textContent=features.volumes?'':'请完全退出并重启 Codex，以加载新建卷功能。';
+    $('volume-create').disabled=!features.volumes;
+    $('volume-dialog').showModal();
+    $('volume-name').focus();
+  }
+  async function createVolume() {
+    if(creating||!features.volumes)return;
+    const name=$('volume-name').value.trim();
+    if(!name){$('volume-error').textContent='请填写卷名。';return;}
+    creating=true;$('volume-create').disabled=true;$('volume-cancel').disabled=true;
+    $('volume-error').textContent='';
+    try{
+      const {folder}=await callTool('create_volume',{workPath:volumeWork,name});
+      selectedFolder=folder.path;
+      for(const folderPath of [volumeWork,volumeWork+'/正文',folder.path])sidebar.reveal(folderPath);
+      await refreshFiles();
+      $('volume-dialog').close();
+    }catch(error){$('volume-error').textContent=error.message;}
+    finally{creating=false;$('volume-create').disabled=false;$('volume-cancel').disabled=false;}
   }
   async function createDocument() {
     if(creating) return;
@@ -758,6 +822,12 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   $('work-name').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();createWork();}});
   async function afterTitleCommit() {if(titleCommit) await titleCommit.catch(()=>{});}
   $('document-create').addEventListener('click',createDocument);
+  $('volume-create').addEventListener('click',createVolume);
+  $('volume-name').addEventListener('keydown',event=>{
+    if(event.key==='Enter'&&!event.isComposing){event.preventDefault();void createVolume();}
+  });
+  $('volume-cancel').addEventListener('click',()=>{if(!creating)$('volume-dialog').close();});
+  $('volume-dialog').addEventListener('cancel',event=>{if(creating)event.preventDefault();});
   $('document-cancel').addEventListener('click',()=>{if(!creating)$('document-dialog').close();});
   $('document-dialog').addEventListener('cancel',event=>{if(creating)event.preventDefault();});
   $('document-name').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();createDocument();}});
@@ -821,10 +891,10 @@ export function attachWorkspace({app,editor,title,clock,callTool,notify,onLoaded
   window.setInterval(autoRefresh,4000);
   for(const event of ['scroll','keyup','pointerup'])editor.addEventListener(event,()=>{clearTimeout(positionTimer);positionTimer=setTimeout(()=>rememberPosition().catch(()=>{}),350);});
   return {
-    onEdit,collectTime,flushRecords,flushDocument,setPendingWritingPaths,acceptWritingSuggestion,applyWritingAction,finishWriting,applyAppearance,adjustFontSize,openDocument,openDraft:()=>openShelfItem({kind:'draft'}),loadDocument,showEditor,get revision(){return revision;},get files(){return fileList;},get features(){return features;},get added(){return added;},get path(){return path;},get finishStatus(){return finishStatus;},get canFinish(){return connected && !creating;},
+    onEdit,collectTime,flushRecords,flushDocument,refreshFiles,setPendingWritingPaths,acceptWritingSuggestion,applyWritingAction,finishWriting,applyAppearance,adjustFontSize,openDocument,openDraft:()=>openShelfItem({kind:'draft'}),loadDocument,showEditor,get workPath(){return currentWork()?.path||'';},get revision(){return revision;},get files(){return fileList;},get features(){return features;},get added(){return added;},get path(){return path;},get finishStatus(){return finishStatus;},get canFinish(){return connected && !creating;},
     async connected() {
       try {
-        const info=await callTool('workspace_info',{});connected=true;acceptWorkspaceInfo(info);appearance.load(info.settings);
+        const info=await callTool('workspace_info',{});connected=true;appearance.load(info.settings);acceptWorkspaceInfo(info);
         // Never replace text typed while the initial disk request was in flight.
         if(!dirty && !editor.value) loadDocument(info.draft);else {renderFiles();if(dirty)await flushDocument();}
       } catch(error) {$('files-status').textContent='本地文件连接未完成';$('document-status').textContent='尚未保存';$('shelf-subtitle').textContent='书架读取未完成，请检查本地文件服务。';notify(error.message);}

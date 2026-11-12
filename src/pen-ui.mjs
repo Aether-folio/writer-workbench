@@ -10,7 +10,7 @@ export function attachPen({editor,title,workspace,callTool,sendMessage,canMessag
   const rows=new Map(),dialog=$('pen-dialog'),input=$('pen-instruction'),toolbar=$('pen-toolbar'),reviewActions=$('pen-review-actions');
   const toolbarHome=toolbar.parentElement;
   const disposeCaret=attachProposalCaret(editor);
-  let toolbarHideTimer,versionPicker=false,batchBusy=false;
+  let toolbarHideTimer,versionPicker=false,batchBusy=false,renderedToolbarRow,renderedToolbarState;
   let supported=false,fetching=false,refreshPending=false,epoch=0,current=null,relocating=null,submitting=false,composing=false,sending=false,drafts=[],completed=[],archivable=[],markers=[],projected=false,projectionDirty=false,activeRow=null,historyOpen=false;
   const allRows=()=>[...rows.values()].filter(r=>r.item.path===workspace.path);
   const readyRows=()=>allRows().filter(row=>row.item.status==='ready');
@@ -138,18 +138,20 @@ export function attachPen({editor,title,workspace,callTool,sendMessage,canMessag
     toolbar.style.left=Math.max(minX,Math.min(left,maxX-box.width))+'px';
     toolbar.style.top=Math.max(minY,Math.min(top,maxY-box.height))+'px';
   }
-  function updateToolbar(keepEquivalent=false){
+  function updateToolbar(){
     if(!activeRow)return;const row=activeRow;
-    const controls=document.createDocumentFragment();
-    const commit=()=>{
-      if(keepEquivalent&&controls.childNodes.length===toolbar.childNodes.length&&
-        [...controls.childNodes].every((control,index)=>control.isEqualNode(toolbar.childNodes[index])))return;
-      toolbar.replaceChildren(controls);
-    };
     const group=toolbarRows();
     const inline=row.item.status==='ready'&&!row.conflict&&!versionPicker&&row.inlineHost;
-    toolbar.classList.toggle('pen-toolbar-inline',inline);
     const host=inline?row.inlineHost:toolbarHome;
+    const resendDisabled=row.item.status==='waiting'&&['sending','sent'].includes(row.item.delivery?.state)&&
+      Date.now()-Date.parse(row.item.delivery?.startedAt||row.item.updatedAt)<120000;
+    const state=JSON.stringify([versionPicker,batchBusy,sending,canMessage(),resendDisabled,
+      group.map(item=>[item.item.id,item.item.version,item.item.status,item.busy,item.conflict,item.notice])]);
+    // Keep the same buttons through unchanged polls so focus and in-flight clicks survive.
+    if(renderedToolbarRow===row&&renderedToolbarState===state&&toolbar.parentElement===host)return;
+    renderedToolbarRow=row;renderedToolbarState=state;
+    toolbar.replaceChildren();
+    toolbar.classList.toggle('pen-toolbar-inline',inline);
     if(toolbar.parentElement!==host)host.append(toolbar);
     if(group.length>1){
       for(const [label,icon,command] of [
@@ -160,12 +162,11 @@ export function attachPen({editor,title,workspace,callTool,sendMessage,canMessag
         const button=iconButton(label,icon,()=>runBatch(command,group));
         button.disabled=batchBusy||group.some(item=>item.busy)||
           (command==='regenerate'&&(sending||!canMessage()));
-        controls.append(button);
+        toolbar.append(button);
       }
-      commit();
       return;
     }
-    const action=(label,name,handler,disabled=false)=>{const button=iconButton(label,name,()=>run(row,handler));button.disabled=batchBusy||row.busy||disabled;controls.append(button);return button;};
+    const action=(label,name,handler,disabled=false)=>{const button=iconButton(label,name,()=>run(row,handler));button.disabled=batchBusy||row.busy||disabled;toolbar.append(button);return button;};
     if(row.item.status==='ready') {
       action('查看对照','compare',()=>showComparison({
         before:row.item.mode==='replace'?row.item.baseBody.slice(row.item.offset,row.item.endOffset):'',
@@ -175,14 +176,13 @@ export function attachPen({editor,title,workspace,callTool,sendMessage,canMessag
       action('重新生成','again',()=>open(row.item,true));
       action('取消','close',()=>discardRow(row));
       const versions=row.item.history||[];
-      if(versionPicker&&versions.length>1){const select=document.createElement('select');select.className='pen-version-select';select.setAttribute('aria-label','查看或恢复递笔版本');const option=document.createElement('option');option.value='';option.textContent='历史版本';select.append(option);for(const v of [...versions].reverse()){const o=document.createElement('option');o.value=v.id;o.textContent=`第${v.generation}轮 · ${v.label} · ${new Date(v.createdAt).toLocaleTimeString('zh-CN')}`;select.append(o);}select.addEventListener('change',()=>{if(select.value)void viewVersion(row,select.value);});controls.append(select);}
+      if(versionPicker&&versions.length>1){const select=document.createElement('select');select.className='pen-version-select';select.setAttribute('aria-label','查看或恢复递笔版本');const option=document.createElement('option');option.value='';option.textContent='历史版本';select.append(option);for(const v of [...versions].reverse()){const o=document.createElement('option');o.value=v.id;o.textContent=`第${v.generation}轮 · ${v.label} · ${new Date(v.createdAt).toLocaleTimeString('zh-CN')}`;select.append(o);}select.addEventListener('change',()=>{if(select.value)void viewVersion(row,select.value);});toolbar.append(select);}
     } else if(row.item.status==='waiting') {
-      const elapsed=Date.now()-Date.parse(row.item.delivery?.startedAt||row.item.updatedAt);action('重新发送','send',()=>deliver([row.item],true),['sending','sent'].includes(row.item.delivery?.state)&&elapsed<120000);
+      action('重新发送','send',()=>deliver([row.item],true),resendDisabled);
       action('取消这次递笔','close',async()=>{await mutate(row,{action:'discard'});removeRow(row);reproject();});
     }
     if(row.conflict)action('移到当前选区或光标','pen',async()=>{await mutate(row,{action:'relocate',body:editor.value,offset:editor.selectionStart,endOffset:editor.selectionEnd});projectionDirty=true;reproject();});
-    if(row.conflict||row.item.status!=='ready'){const label=document.createElement('span');label.className='pen-toolbar-status';label.textContent=row.notice|| (row.conflict?'原位置已变动，请重新定位':'已发送，等待返回');controls.append(label);}
-    commit();
+    if(row.conflict||row.item.status!=='ready'){const label=document.createElement('span');label.className='pen-toolbar-status';label.textContent=row.notice|| (row.conflict?'原位置已变动，请重新定位':'已发送，等待返回');toolbar.append(label);}
   }
   async function viewVersion(row,key){const {snapshot}=await callTool('writing_version',{id:row.item.id,versionId:key});const panel=$('pen-version-dialog');$('pen-version-before').textContent=snapshot.text;$('pen-version-after').textContent=row.body.value;$('pen-version-title').textContent=`历史第${snapshot.generation}轮 / 当前第${row.item.generation}轮`;$('pen-version-restore').onclick=()=>run(row,async()=>{await saveEdit(row);await mutate(row,{action:'restoreVersion',versionId:key});panel.close();row.body.value=row.item.text;projectionDirty=true;reproject();});panel.showModal();}
   function makeRow(item){
@@ -307,7 +307,7 @@ export function attachPen({editor,title,workspace,callTool,sendMessage,canMessag
     if(!toolbar.hidden){updateToolbar();positionToolbar();}
     document.dispatchEvent(new Event('workbench:source-projected'));
   }
-  function renderNotes(){const list=$('annotation-list');list.replaceChildren();$('annotation-count').textContent=`${drafts.length}条`;
+  function renderNotes(){const list=$('annotation-list');list.replaceChildren();const panel=list.closest('.writing-sidebar');const empty=drafts.length===0;if(panel.hidden!==empty){panel.hidden=empty;document.dispatchEvent(new CustomEvent('workbench:stats-layout'));}$('annotation-count').textContent=`${drafts.length}条`;
     for(const item of drafts){const card=document.createElement('div');card.className='pen-note-card';card.dataset.id=item.id;const button=document.createElement('button');button.className='pen-note-open';button.title=item.path||item.title;const name=document.createElement('small');name.textContent=item.path?.split('/').slice(-2).join(' / ')||'草稿';const body=document.createElement('span');body.textContent=item.instruction;button.append(name,body);button.onclick=()=>void open(item);const remove=iconButton('删除批注','trash',()=>void deleteDraft(item));remove.classList.add('pen-note-delete');card.append(button,remove);list.append(card);}
     updateBatchButtons();
     if(historyOpen){const list=$('pen-history-list');list.replaceChildren();for(const item of completed){const entry=document.createElement('div');entry.className='pen-history-entry';const text=document.createElement('p');text.textContent=`${new Date(item.updatedAt).toLocaleString('zh-CN')} · ${item.status==='accepted'?'已采纳':item.status==='answered'?'已讨论':'未采纳'} · ${item.instruction}`;entry.append(text);if(item.status==='accepted'){entry.append(iconButton('撤销这次采纳','undo',async()=>{try{await workspace.applyWritingAction(item,'undo');await sync(true);}catch(e){notify(e.message);}}));}const resultText=item.status==='accepted'?(item.acceptance?.inserted??item.text):item.text;if(resultText){const details=document.createElement('details'),summary=document.createElement('summary'),body=document.createElement('pre');summary.textContent='查看结果';body.textContent=resultText;details.append(summary,body);entry.append(details);}list.append(entry);}}
@@ -319,7 +319,7 @@ export function attachPen({editor,title,workspace,callTool,sendMessage,canMessag
     drafts=result.drafts||[];completed=result.completed||[];archivable=result.archivable||[];const found=new Set(result.requests.map(i=>i.id));let change=force;
     for(const row of [...rows.values()])if(row.item.path!==path||!found.has(row.item.id)){if(!row.dirty&&!row.busy){removeRow(row);change=true;}}
     for(const item of result.requests){if(item.status==='draft')continue;let row=rows.get(item.id);if(!row){row=makeRow(item);change=true;}else if(!row.dirty&&!row.busy&&!row.editPromise&&item.version>=row.item.version){if(item.text!==row.item.text||item.status!==row.item.status||item.mode!==row.item.mode)change=true;row.item=item;}}
-    $('ai-writing-status').textContent=result.warnings?.length?`${result.warnings.length}条递笔记录异常，其他内容可正常使用。`:'';renderNotes();if(change||projectionDirty)reproject();else if(!toolbar.hidden)updateToolbar(true);
+    $('ai-writing-status').textContent=result.warnings?.length?`${result.warnings.length}条递笔记录异常，其他内容可正常使用。`:'';renderNotes();if(change||projectionDirty)reproject();updateToolbar();
   }catch(error){notify('递笔同步未完成：'+error.message);}finally{fetching=false;available();if(refreshPending){refreshPending=false;void sync(true);}}}
   async function open(item=null,regenerate=false){
     if(editor.readOnly)return;toolbar.hidden=true;$('selection-menu').hidden=true;

@@ -13,6 +13,7 @@ dist/
 runtime/
 dsh/lib/
 dsh/assets/editor.html
+dsh/assets/fonts/
 test-results/
 **/test-results/
 .test-temp/

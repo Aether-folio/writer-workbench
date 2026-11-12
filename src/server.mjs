@@ -6,9 +6,11 @@ import {z} from 'zod';
 import {createWorkspace,draftSchema,recordSchema,statsPreferencesSchema,settingsSchema} from './workspace.mjs';
 import {resolveWorkspaceSetting} from './workspace-config.mjs';
 import {createWritingSchema,publishWritingSchema,stageChatEditsSchema,updateWritingSchema,writingContextSchema} from './writing-suggestions.mjs';
+import {progressWorkSchema,progressJobSchema,progressAgentTools} from './work-progress.mjs';
+import {handwritingFontSchema,readHandwritingFont} from './handwriting-fonts.mjs';
 
 const URI = 'ui://writer-workbench/editor.html';
-const VERSION = '0.5.0';
+const VERSION = '0.5.2';
 const workspace=createWorkspace(resolveWorkspaceSetting());
 await workspace.init();
 const meta = {
@@ -38,7 +40,7 @@ serveStdio(() => {
     _meta:meta,
   }, async () => ({
     content:[{type:'text', text:'递笔工作台已准备。选区或光标处点击「递笔」填写要求，可以暂存为原位批注，或发送到聊天。Enter 发送，Shift+Enter 换行。补写和改写返回原位淡背景建议，可编辑、对照、采纳或再递笔；讨论不改正文。批注与历史保存在本地。'}],
-    structuredContent:{version:VERSION, title:'递笔工作台', manuscriptAccess:'workbench-folder-only', draftOnly:false,chatMessage:{target:'active',send:true},storageFolder:'码字工作台'},
+    structuredContent:{version:VERSION, title:'递笔工作台', manuscriptAccess:'workbench-folder-only', draftOnly:false,chatMessage:{target:'active',send:true},storageFolder:'码字工作台',workProgress:true},
   }));
   server.registerTool('workbench_status', {
     title:'检查工作台接入声明',
@@ -46,12 +48,19 @@ serveStdio(() => {
     inputSchema:z.object({}),
     annotations:{readOnlyHint:true, destructiveHint:false, openWorldHint:false},
   }, async () => ({
-    content:[{type:'text',text:JSON.stringify({version:VERSION, declaredEntrypoints:['global','thread'], resource:URI, chatMessage:{target:'active',send:true}, manuscriptAccess:'workbench-folder-only',storageFolder:'码字工作台',autoSave:true,hostValidation:'required'})}],
+    content:[{type:'text',text:JSON.stringify({version:VERSION, declaredEntrypoints:['global','thread'], resource:URI, chatMessage:{target:'active',send:true}, manuscriptAccess:'workbench-folder-only',storageFolder:'码字工作台',autoSave:true,workProgress:true,hostValidation:'required'})}],
   }));
   function appTool(name,title,inputSchema,readOnlyHint,run,destructiveHint=false) {
     server.registerTool(name,{title,description:title+'，仅供递笔工作台界面调用，文件范围限定为专用数据文件夹。',inputSchema,outputSchema:z.record(z.string(),z.unknown()),annotations:{readOnlyHint,destructiveHint,openWorldHint:false},_meta:{ui:{visibility:['app']}}},async input=>({content:[],structuredContent:await run(input)}));
   }
   appTool('workspace_info','扫描工作台文件',z.object({}),true,()=>workspace.info());
+  appTool('read_handwriting_font','载入本地手写字体',handwritingFontSchema,true,readHandwritingFont);
+  appTool('start_work_progress','对比正文与已有章节进度',progressWorkSchema,false,workspace.progress.start);
+  appTool('work_progress_status','查看章节整理进度',progressWorkSchema,true,workspace.progress.status);
+  appTool('cancel_work_progress','停止章节整理',progressJobSchema,false,workspace.progress.cancel);
+  for(const {name,description,schema,method,readOnly} of progressAgentTools)
+    server.registerTool(name,{description,inputSchema:schema,annotations:{readOnlyHint:readOnly,destructiveHint:false,openWorldHint:false}},
+      async input=>({content:[{type:'text',text:JSON.stringify(await workspace.progress[method](input))}]}));
   appTool('create_writing_request','创建递笔或暂存批注',createWritingSchema,false,input=>workspace.createWritingRequest(input));
   appTool('writing_requests','同步递笔、暂存批注与建议',z.object({path:z.string().max(240),history:z.boolean().optional(),allDrafts:z.boolean().optional()}),true,input=>workspace.writingRequests(input));
   appTool('update_writing_request','编辑、重生成、采纳或不采纳 AI 内容',updateWritingSchema,false,input=>workspace.updateWritingRequest(input));
@@ -74,6 +83,8 @@ serveStdio(() => {
     annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false},
   },async input=>({content:[{type:'text',text:JSON.stringify(await workspace.stageChatEdits(input))}]}));
   appTool('create_work','添加作品并创建设定、正文与草稿文件夹',z.object({name:z.string().trim().min(1).max(80)}),false,input=>workspace.createWork(input));
+  appTool('create_volume','在作品正文下新建卷',z.object({workPath:z.string().max(80),name:z.string().trim().min(1).max(80)}),false,input=>workspace.createVolume(input));
+  appTool('prepare_work_volumes','将散放的正文章节归入第一卷',z.object({workPath:z.string().max(80)}),false,input=>workspace.prepareWorkVolumes(input));
   appTool('stats_preferences','读取码字统计设置与作品封面',z.object({workPath:z.string().max(80).optional()}),true,input=>workspace.statsPreferences(input));
   appTool('save_stats_preferences','保存码字统计设置与作品封面',statsPreferencesSchema,false,input=>workspace.saveStatsPreferences(input));
   appTool('read_document','打开工作台文稿',z.object({path:z.string().max(240)}),true,({path})=>workspace.readDocument(path));

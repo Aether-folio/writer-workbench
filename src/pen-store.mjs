@@ -27,7 +27,7 @@ export function replaceEditorRange(source,start,end,addition) {
 }
 export const writingRange=item=>item.mode==='replace'?{start:item.offset,end:item.endOffset??item.offset}:{start:item.endOffset??item.offset,end:item.endOffset??item.offset};
 
-export function createWritingStore({checked,atomic,validatePath,readDocument,saveDocument,readDraft,commitDraft,sequential:sharedQueue,resolvePath=async p=>p}) {
+export function createWritingStore({checked,atomic,validatePath,readDocument,saveDocument,readDraft,commitDraft,readWorkMemory,sequential:sharedQueue,resolvePath=async p=>p}) {
   let pending=Promise.resolve();
   const sequential=sharedQueue || (run=>{const op=pending.then(run);pending=op.catch(()=>{});return op;});
   const cache=new Map(),active=item=>['draft','waiting','ready','accepting'].includes(item.status);
@@ -72,7 +72,10 @@ export function createWritingStore({checked,atomic,validatePath,readDocument,sav
   async function version(key,versionId){const item=await read(id.parse(key));if(!item.history.some(v=>v.id===versionId))throw new Error('未找到该版本。');const snapshot=JSON.parse(await readFile(await checked(`数据/递笔历史/${item.id}/${id.parse(versionId)}.json`),'utf8'));return {snapshot};}
   async function context(item) {
     const sources=[],sourceWarnings=[];let remaining=24000;
-    for(const path of item.contextPaths){if(!remaining)break;if(!item.path || path.split('/')[0]!==item.path.split('/')[0])continue;try{const doc=await readDocument(path);const excerpt=doc.body.slice(0,Math.min(6000,remaining));sources.push({path,text:excerpt,truncated:excerpt.length<doc.body.length});remaining-=excerpt.length;}catch(error){sourceWarnings.push({path,message:'参考资料不可读取，未使用该资料。'});}}
+    let memory;
+    try{memory=await readWorkMemory?.(item.path);}catch{sourceWarnings.push({message:'章节进度不可读取，未作为参考。'});}
+    if(memory){sources.push(memory);remaining-=memory.text.length;}
+    for(const path of item.contextPaths){if(!remaining)break;if(!item.path || path===memory?.path || path.split('/')[0]!==item.path.split('/')[0])continue;try{const doc=await readDocument(path);const excerpt=doc.body.slice(0,Math.min(6000,remaining));sources.push({path,text:excerpt,truncated:excerpt.length<doc.body.length});remaining-=excerpt.length;}catch(error){sourceWarnings.push({path,message:'参考资料不可读取，未使用该资料。'});}}
     return {requestId:item.id,generation:item.generation,path:item.path,title:item.title,instruction:item.instruction,originalInstruction:item.originalInstruction||item.instruction,feedback:item.feedback.slice(-8),previousText:item.text,selection:{start:item.offset,end:item.endOffset,text:item.baseBody.slice(item.offset,item.endOffset)},context:{before:item.baseBody.slice(Math.max(0,item.offset-3000),item.offset),after:item.baseBody.slice(item.endOffset,item.endOffset+3000)},sources,sourceWarnings,responseTool:'publish_writing_suggestion',responseModes:['discussion','insert','replace'],paragraphSeparator:'single-newline'};
   }
   async function update(input) {

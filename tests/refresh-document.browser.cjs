@@ -10,7 +10,7 @@ async function main(){
     active=await fixture(browser,{body:'开头不变。\n旧动作。\n删掉这一段。\n结尾不变。'+tail});
     const {frame,workspace,doc}=active;
     const editor=frame.locator('#draft-body'), refresh=frame.locator('#refresh-files');
-    const sibling=await workspace.saveDocument({path:'测试作品/正文/第二章.md',body:'另一篇正文。'});
+    const sibling=await workspace.saveDocument({path:'测试作品/正文/第一卷/第二章.md',body:'另一篇正文。'});
     await refresh.click();
     await refresh.locator('xpath=self::button[not(@aria-busy)]').waitFor();
     await workspace.saveDocument({path:sibling.path,revision:sibling.revision,body:'改过的另一篇正文。'});

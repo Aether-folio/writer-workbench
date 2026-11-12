@@ -90,18 +90,17 @@ try{active=await fixture(browser,{body:'甲乙\n\n丙丁\n戊己'});let {frame,p
    const style=getComputedStyle(el);
    return [el.textContent,style.fontSize,style.fontWeight];
  }),['递笔中...','16px','700']);
- const dots=waiting.locator('.pen-wait-dots');
- const stages=await dots.evaluate(el=>{
+ const stages=await waiting.evaluate(el=>{
    const animation=el.getAnimations()[0];
    animation.pause();
-   return [0,410,810,1210].map(time=>{
+   return [0,600,1200,1800].map(time=>{
      animation.currentTime=time;
-     return getComputedStyle(el).clipPath;
+     return getComputedStyle(el).backgroundPosition;
    });
  });
  assert.equal(new Set(stages).size,4);
  await page.emulateMedia({reducedMotion:'reduce'});
- assert.equal(await dots.evaluate(el=>getComputedStyle(el).animationName),'none');
+ assert.equal(await waiting.evaluate(el=>getComputedStyle(el).animationName),'none');
  await active.publish(insertion,'insert');
  const inline=frame.locator('.pen-proposal-text').filter({hasText:insertion});
  await inline.waitFor();
@@ -125,6 +124,10 @@ try{active=await fixture(browser,{body:'甲乙\n\n丙丁\n戊己'});let {frame,p
  });
  assert.equal(overlapsText,false,'The inline toolbar must leave both the suggestion and the following manuscript visible');
  assert.equal((await workspace.readDocument(doc.path)).body,prefix+suffix);
+ await accept.focus();
+ const focusedButton=await accept.elementHandle();
+ await pause(2800); // Cross an unchanged writing-request poll.
+ assert.equal(await focusedButton.evaluate(el=>el.isConnected&&el===el.ownerDocument.activeElement),true);
  await accept.click();
  await inline.waitFor({state:'hidden'});
  assert.equal((await workspace.readDocument(doc.path)).body,prefix+insertion+suffix);

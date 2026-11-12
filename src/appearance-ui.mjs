@@ -1,15 +1,57 @@
 import {nativePresets,glassPalettes,glassPalette,glassTokens} from './themes.mjs';
+import {fonts,bundledFonts} from './font-choices.mjs';
 
-const defaults={background:'#fffdf8',theme:'native',glassPalette:'glacier',glassFrost:70,fontSize:18,lineHeight:1.6,paragraphGap:1.3,pageWidth:1100,autoPageWidth:true,reduceMotion:false,sidebarSide:'left'};
+const defaults={background:'#fffdf8',theme:'native',glassPalette:'glacier',glassFrost:70,fontFamily:'system',fontSize:18,lineHeight:1.6,paragraphGap:1.3,pageWidth:1100,autoPageWidth:true,reduceMotion:false,sidebarSide:'left'};
 const SIDE_KEY='writer-workbench:sidebar-side';
 const $=id=>document.getElementById(id);
 
 export function attachAppearance({callTool,notify}){
   let settings={...defaults},localSide='',timer,saving=false,generation=0,pending=false;
   const dirty={};
+  const loadedFonts=new Map();
+  const fontSelect=$('type-family'),fontHint=$('font-load-status'),dialog=$('appearance-dialog'),done=$('appearance-close');
+  let previewFont=defaults.fontFamily,applyingFont=false,previewRequest=0;
   try{const value=localStorage.getItem(SIDE_KEY);if(['left','right'].includes(value))localSide=value;}catch{}
   const status=message=>{$('appearance-status').textContent=message;};
   const tokenKeys=new Set(Object.keys(glassTokens('glacier')));
+  function loadFont(font){
+    const bundled=Object.hasOwn(bundledFonts,font)?bundledFonts[font]:null;
+    if(!bundled)return Promise.resolve();
+    if(loadedFonts.has(font))return loadedFonts.get(font);
+    const load=async()=>{
+      const chunks=[];
+      for(let offset=0;offset!==null;){
+        const chunk=await callTool('read_handwriting_font',{font,offset});
+        chunks.push(Uint8Array.from(atob(chunk.data),char=>char.charCodeAt(0)));
+        offset=chunk.next;
+      }
+      const stream=new Blob(chunks).stream().pipeThrough(new DecompressionStream('gzip'));
+      const face=await new FontFace(bundled.family,await new Response(stream).arrayBuffer()).load();
+      document.fonts.add(face);
+    };
+    const request=load().then(()=>{
+      document.dispatchEvent(new CustomEvent('workbench:stats-layout'));
+    }).catch(error=>{
+      loadedFonts.delete(font);
+      throw error;
+    });
+    loadedFonts.set(font,request);
+    return request;
+  }
+  async function updateFontPreview(font){
+    const request=++previewRequest;
+    previewFont=Object.hasOwn(fonts,font)?font:'system';
+    fontSelect.value=previewFont;
+    $('type-preview').style.setProperty('--wb-preview-font-family',fonts[previewFont]);
+    $('type-preview-font').textContent=fontSelect.selectedOptions[0].textContent;
+    fontHint.textContent=Object.hasOwn(bundledFonts,previewFont)?'正在载入字体…':'';
+    try{
+      await loadFont(previewFont);
+      if(request===previewRequest)fontHint.textContent='';
+    }catch{
+      if(request===previewRequest)fontHint.textContent='手写字体未能载入。点击「完成」时会重试。';
+    }
+  }
 
   function apply(){
     const root=document.documentElement,isGlass=settings.theme==='glass',color=settings.background;
@@ -18,6 +60,8 @@ export function attachAppearance({callTool,notify}){
     const light=isGlass?Boolean(glassPalette(settings.glassPalette).light):.2126*linear[0]+.7152*linear[1]+.0722*linear[2]>.179;
     root.style.colorScheme=light?'light':'dark';root.dataset.theme=isGlass?'glass':'native';root.dataset.glassPalette=settings.glassPalette;
     root.dataset.reduceMotion=String(settings.reduceMotion);
+    const font=Object.hasOwn(fonts,settings.fontFamily)?settings.fontFamily:'system';
+    root.style.setProperty('--wb-font-family',fonts[font]);
     root.dataset.autoPageWidth=String(settings.autoPageWidth);
     $('auto-page-width').checked=settings.autoPageWidth;
     $('type-width').disabled=settings.autoPageWidth;
@@ -55,6 +99,8 @@ export function attachAppearance({callTool,notify}){
     try{
       const result=await callTool('save_settings',sent);
       if(sent.theme==='glass'&&result?.settings?.theme!=='glass')throw Error('请重启客户端，让新版服务支持液体玻璃主题。');
+      if(sent.fontFamily!=='system'&&result?.settings?.fontFamily!==sent.fontFamily)throw Error('请重启客户端，让新版服务支持字体设置。');
+      if(dirty.chapterOrders&&!result?.settings?.chapterOrders)throw Error('请重启客户端，以保存章节排序。');
       if(current===generation)status('所有设置已保存。');
     }catch(error){
       if(current===generation){status('保存未完成：'+error.message);$('appearance-retry').hidden=false;notify('设置保存未完成，可在设置底部重试。');}
@@ -95,6 +141,7 @@ export function attachAppearance({callTool,notify}){
     input.addEventListener('input',()=>{const value=Number(input.value);if(input.validity.valid&&value>=min&&value<=max)change({[key]:value},400);});
     input.addEventListener('change',()=>{if(!input.validity.valid||!input.value){input.value=settings[key];}});
   }
+  fontSelect.addEventListener('change',()=>void updateFontPreview(fontSelect.value));
   $('type-motion').addEventListener('change',event=>change({reduceMotion:event.target.checked}));
   $('auto-page-width').addEventListener('change',event=>change({autoPageWidth:event.target.checked}));
   const tabs=[...document.querySelectorAll('.settings-nav [role=tab]')];
@@ -111,19 +158,53 @@ export function attachAppearance({callTool,notify}){
       selectTab(tabs[next],true);
     });
   }
-  $('appearance-open').addEventListener('click',()=>{$('appearance-dialog').showModal();});
-  function close(){if(pending){clearTimeout(timer);void persist();}$('appearance-dialog').close();}
-  $('appearance-close').addEventListener('click',close);
-  $('appearance-dialog').addEventListener('cancel',event=>{event.preventDefault();close();});
+  $('appearance-open').addEventListener('click',()=>{
+    dialog.showModal();
+    void updateFontPreview(settings.fontFamily);
+  });
+  function close(){
+    previewRequest++;
+    if(pending){clearTimeout(timer);void persist();}
+    dialog.close();
+  }
+  done.addEventListener('click',async()=>{
+    if(applyingFont)return;
+    if(previewFont===settings.fontFamily){close();return;}
+    applyingFont=true;done.disabled=true;fontSelect.disabled=true;
+    const selected=previewFont;
+    try{
+      await loadFont(selected);
+      change({fontFamily:selected});
+      close();
+    }catch{
+      fontHint.textContent='字体未能载入，请重试。';
+      status('字体未能应用。');
+    }finally{
+      applyingFont=false;done.disabled=false;fontSelect.disabled=false;
+    }
+  });
+  dialog.addEventListener('cancel',event=>{event.preventDefault();if(!applyingFont)close();});
   $('appearance-retry').addEventListener('click',()=>{pending=true;clearTimeout(timer);void persist();});
-  $('settings-stats-open').addEventListener('click',()=>{close();$('stats-settings').click();});
+  $('settings-stats-open').addEventListener('click',()=>{if(!applyingFont){close();$('stats-settings').click();}});
   apply();
   return {
     apply,
+    get chapterOrders(){return settings.chapterOrders||{};},
+    setChapterOrder(path,order){change({chapterOrders:{...settings.chapterOrders,[path]:order}});},
+    moveChapterOrders(from,to){
+      const entries=Object.entries(settings.chapterOrders||{});
+      if(entries.some(([key])=>key===from||key.startsWith(from+'/'))){
+        change({chapterOrders:Object.fromEntries(entries.map(([key,order])=>[
+          key===from||key.startsWith(from+'/')?to+key.slice(from.length):key,order
+        ]))});
+      }
+    },
     load(value){
       const autoPageWidth=value?.autoPageWidth??((value?.pageWidth??defaults.pageWidth)===defaults.pageWidth);
       settings={...defaults,...value,autoPageWidth,...dirty};
       apply();
+      if(!dialog.open)void updateFontPreview(settings.fontFamily);
+      else void loadFont(settings.fontFamily).catch(()=>{});
     },
     adjustFontSize(delta){const next=Math.max(14,Math.min(30,Math.round(settings.fontSize+delta)));if(next!==settings.fontSize)change({fontSize:next},500);return next;}
   };

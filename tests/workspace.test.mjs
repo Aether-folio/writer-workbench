@@ -12,6 +12,106 @@ async function fixture(run) {
   try {await store.init();await run(store,directory);}
   finally {assert.ok(resolve(directory).startsWith(resolve(tmpdir())+sep));assert.ok(directory.includes('writer-workspace-test-'));await rm(directory,{recursive:true,force:true});}
 }
+test('散放章节归入第一卷，迁移阅读位置且保留同名章节',()=>fixture(async store=>{
+  const workPath='分卷测试';
+  await store.createWork({name:workPath});
+  const body=workPath+'/正文',volume=body+'/第一卷';
+  const chapter=await store.saveDocument({path:body+'/第一章.md',body:'第一章正文'});
+  await store.saveDocument({path:body+'/第二章.md',body:'散放的第二章'});
+  await store.saveDocument({path:volume+'/第二章.md',body:'第一卷的第二章'});
+  await store.readingPosition({path:chapter.path,position:{start:2,end:2,scrollTop:10}});
+  const result=await store.prepareWorkVolumes({workPath});
+  assert.deepEqual(result.moves,[{from:chapter.path,to:volume+'/第一章.md'}]);
+  assert.deepEqual(result.conflicts,['第二章.md']);
+  assert.equal((await store.readDocument(volume+'/第一章.md')).body,chapter.body);
+  assert.equal((await store.readingPosition({path:volume+'/第一章.md'})).position.start,2);
+  assert.equal((await store.readDocument(volume+'/第二章.md')).body,'第一卷的第二章');
+  assert.equal((await store.readDocument(body+'/第二章.md')).body,'散放的第二章');
+  assert.deepEqual((await store.prepareWorkVolumes({workPath})).moves,[]);
+  const {folder}=await store.createVolume({workPath,name:'第二卷'});
+  assert.equal(folder.path,body+'/第二卷');
+  await assert.rejects(store.createVolume({workPath,name:'第二卷'}),/同名卷/);
+}));
+test('正文总字数包含分卷，排除草稿、设定和标题，并随编辑及删除更新',()=>fixture(async store=>{
+  const work='统计作品',key=work+'/正文';
+  await store.createWork({name:work});
+  const chapter=await store.saveDocument({path:key+'/第一卷/第一章.md',body:'# 章节名\n正文，开始。'});
+  await store.saveDocument({path:key+'/第二章.txt',body:'再写两字'});
+  await store.saveDocument({path:work+'/草稿/草稿.md',body:'这段不计'});
+  await store.saveDocument({path:work+'/设定/大纲/进度.md',body:'这段不计'});
+  assert.equal((await store.info()).wordTotals[key],8);
+  const updated=await store.saveDocument({path:chapter.path,revision:chapter.revision,body:'# 章节名\n继续写作吧'});
+  assert.equal((await store.info()).wordTotals[key],9);
+  await store.deleteDocument({path:updated.path,revision:updated.revision});
+  assert.equal((await store.info()).wordTotals[key],4);
+}));
+test('章节进度增量更新、保留手记并自动用于递笔',()=>fixture(async(store,directory)=>{
+  const workPath='测试作品',request={workPath},summary={plot:'找到旧地图',foreshadowing:'地图缺角，可能是伏笔',continuity:'主角持有地图'};
+  await store.createWork({name:workPath});
+  const first=await store.saveDocument({path:workPath+'/正文/第一章.md',body:'她找到一张缺角的旧地图。'});
+  const second=await store.saveDocument({path:workPath+'/正文/第2章.md',body:'她循着地图离开小镇。'});
+  let job=await store.progress.start(request);
+  assert.equal(job.total,2);
+  const complete=async expected=>{
+    const chapter=await store.progress.next({jobId:job.jobId});
+    assert.equal(chapter.chapter,expected);
+    job=await store.progress.submit({jobId:job.jobId,token:chapter.token,summary});
+  };
+  await complete('第一章.md');
+  assert.equal(job.done,1);
+  await complete('第2章.md');
+  assert.equal(job.phase,'done');
+  const doc=await store.readDocument(job.path);
+  assert.ok(doc.body.indexOf('## 第2章')<doc.body.indexOf('## 第一章'));
+  await store.saveDocument({path:doc.path,revision:doc.revision,body:doc.body+'作者自己的备忘。\n'});
+  const reopened=createWorkspace(directory);
+  await reopened.init();
+  const noChanges=await reopened.progress.start(request);
+  assert.equal(noChanges.dispatch,false);
+  assert.equal(noChanges.reused,2);
+  const pen=await store.createWritingRequest({path:second.path,title:second.title,body:second.body,offset:0,instruction:'核对情节'});
+  const context=await store.getWritingRequest({path:second.path,instruction:'核对情节',requestId:pen.request.id});
+  assert.match(context.sources[0].text,/第一章[\s\S]*地图缺角/);
+  assert.doesNotMatch(context.sources[0].text,/第2章/);
+  await store.saveDocument({path:first.path,revision:first.revision,body:'她找到一只指南针。'});
+  job=await store.progress.start(request);
+  assert.equal(job.changed,1);
+  assert.equal(job.reused,1);
+  await complete('第一章.md');
+  assert.match((await store.readDocument(job.path)).body,/作者自己的备忘。/);
+  assert.equal((await store.readDocument(first.path)).body,'她找到一只指南针。');
+  await store.saveDocument({path:workPath+'/正文/第十章.md',body:'她到达山顶。'});
+  job=await store.progress.start(request);
+  assert.equal(job.reused,2);
+  await complete('第十章.md');
+  const reordered=(await store.readDocument(job.path)).body;
+  assert.ok(reordered.indexOf('## 第十章')<reordered.indexOf('## 第2章'));
+  await store.deleteDocument({path:second.path,revision:second.revision});
+  job=await store.progress.start(request);
+  assert.equal(job.removed,1);
+  assert.equal(job.dispatch,false);
+  assert.doesNotMatch((await store.readDocument(job.path)).body,/第2章/);
+}));
+test('分段整理检测处理中改稿，拒绝旧摘要，重试不会修改正文',()=>fixture(async store=>{
+  const workPath='测试作品',summary={plot:'情节',foreshadowing:'无明显伏笔',continuity:'人物状态'};
+  await store.createWork({name:workPath});
+  const chapter=await store.saveDocument({path:workPath+'/正文/第一章.md',body:'甲'.repeat(15999)+'🌙后一段'});
+  const job=await store.progress.start({workPath});
+  const first=await store.progress.next({jobId:job.jobId});
+  assert.equal(first.body.length,15999);
+  assert.equal(first.isLastPart,false);
+  await store.progress.submit({jobId:job.jobId,token:first.token,summary});
+  const next=await store.progress.next({jobId:job.jobId});
+  assert.equal(next.body,'🌙后一段');
+  assert.deepEqual(next.previous,summary);
+  await store.saveDocument({path:chapter.path,revision:chapter.revision,body:'修改过的正文'});
+  await assert.rejects(store.progress.submit({jobId:job.jobId,token:next.token,summary}),/正文已改动/);
+  assert.equal(store.progress.status({workPath}).phase,'error');
+  await assert.rejects(store.readDocument(job.path),{code:'ENOENT'});
+  const retry=await store.progress.start({workPath});
+  assert.notEqual(retry.jobId,job.jobId);
+  assert.equal((await store.progress.next({jobId:retry.jobId})).body,'修改过的正文');
+}));
 test('工作区文稿可创建、扫描和编辑，外部冲突保留原文件，覆盖前保留备份',()=>fixture(async store=>{
   const first=await store.saveDocument({path:'文稿/第一章.md',body:'作者输入的文字'});
   assert.equal((await store.scan())[0].path,first.path);
@@ -150,8 +250,8 @@ test('删除拒绝旧版本、越界和链接，回收站数据不能用于越�
 }));
 
 test('添加作品创建三个空文件夹，作品名与文稿路径重启可恢复',()=>fixture(async(store,directory)=>{
-  const result=await store.createWork({name:'测试长篇'});
-  assert.equal(result.work.name,'测试长篇');
+  const result=await store.createWork({name:'示例长篇'});
+  assert.equal(result.work.name,'示例长篇');
   assert.deepEqual(new Set(await readdir(join(store.root,result.work.path))),new Set(['设定','正文','草稿']));
   assert.deepEqual(await store.scan(),[]);
   const info=await createWorkspace(directory).info();

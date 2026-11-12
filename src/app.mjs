@@ -9,17 +9,20 @@ import {attachPen} from './pen-ui.mjs';
 import {decorateButton} from './icons.mjs';
 import {attachWriterTools} from './writer-tools-ui.mjs';
 import {attachFileComparison} from './pen-compare.mjs';
+import {attachWorkProgress} from './work-progress-ui.mjs';
 
 const $=id=>document.getElementById(id),editor=attachParagraphEditor($('draft-body')),title=$('draft-title'),feedback=$('feedback'),menu=$('selection-menu'),clock=new WritingClock();
 const writingFullscreen=attachWritingFullscreen({editor});
 let connected=false,messageSupported=false,composing=false,words=0,hostDisplayMode='',availableDisplayModes=null,changingDisplay=false;
-const app=new App({name:'writer-workbench',version:'0.5.0'},{availableDisplayModes:['fullscreen','inline']}),extensions=new OpenAIExtensions(app);
+const app=new App({name:'writer-workbench',version:'0.5.2'},{availableDisplayModes:['fullscreen','inline']}),extensions=new OpenAIExtensions(app);
 async function callTool(name,args){const result=await app.callServerTool({name,arguments:args});if(result.isError)throw new Error(result.content?.find(c=>c.type==='text')?.text||'本地服务未完成请求。');if(!result.structuredContent)throw new Error('本地服务返回格式不正确。');return result.structuredContent;}
 const notify=text=>{feedback.textContent=text;};
 const workspace=attachWorkspace({app,editor,title,clock,callTool,notify,isComposing:()=>composing,onLoaded:()=>{words=countWords(editor.value);renderStats();}});
 attachFloatingStats({callTool,notify});
 const showComparison=attachFileComparison($('pen-compare-dialog'),{workspace,callTool});
-const pen=attachPen({editor,title,workspace,callTool,notify,showComparison,canMessage:()=>connected&&messageSupported,sendMessage:async params=>{const result=await extensions.message.send(params);if(result?.isError)throw new Error('宿主未确认发送，请检查聊天后重试。');}});
+const chat={canMessage:()=>connected&&messageSupported,sendMessage:async params=>{const result=await extensions.message.send(params);if(result?.isError)throw new Error('宿主未确认发送，请检查聊天后重试。');}};
+const pen=attachPen({editor,title,workspace,callTool,notify,showComparison,...chat});
+attachWorkProgress({workspace,callTool,notify,...chat});
 attachWriterTools({editor,workspace,callTool,notify});
 function renderDisplay(){const button=$('fullscreen');button.hidden=hostDisplayMode==='fullscreen'||Boolean(availableDisplayModes&&!availableDisplayModes.includes('fullscreen'));button.disabled=!connected||changingDisplay;}
 function applyHost(context){if(context?.theme)applyDocumentTheme(context.theme);if(context?.styles?.variables)applyHostStyleVariables(context.styles.variables);workspace.applyAppearance();if(context?.displayMode)hostDisplayMode=context.displayMode;if(context?.availableDisplayModes)availableDisplayModes=context.availableDisplayModes;renderDisplay();}
@@ -48,8 +51,9 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.defaultPrevented
 window.addEventListener('resize',()=>menu.hidden=true);
 $('pause').onclick=()=>{clock.pause(performance.now());renderStats();workspace.flushRecords().catch(()=>{});};$('finish-writing').onclick=()=>workspace.finishWriting();
 $('fullscreen').onclick=async()=>{if(!connected||changingDisplay)return;changingDisplay=true;renderDisplay();try{const result=await app.requestDisplayMode({mode:'fullscreen'},{timeout:8000});hostDisplayMode=result.mode;if(result.mode==='fullscreen')writingFullscreen.set(true);}catch{notify('请使用客户端面板的展开入口。');}finally{changingDisplay=false;renderDisplay();}};
-for(const [id,label,name] of [['shelf-home','返回书架','shelf'],['search-open','查找与替换','search'],['backup-open','文稿备份','history'],['refresh-files','刷新文件列表和当前文稿','again'],['trash-open','文稿回收站','archive'],['writing-fullscreen','全屏写作','expand'],['writing-fullscreen-exit','退出全屏','collapse'],['annotations-to-chat','全部发送批注','send'],['annotations-clear','删除全部批注','trash'],['pen-history-open','递笔记录','history'],['pause','暂停','pause'],['pen-history-close','关闭','close'],['pen-version-close','关闭','close'],['pen-note-picker-close','关闭','close'],['search-close','关闭','close'],['backup-close','关闭','close']])if($(id))decorateButton($(id),label,name);
+for(const [id,label,name] of [['shelf-home','返回书架','shelf'],['search-open','查找与替换','search'],['compare-files-open','文本对照','compare'],['backup-open','文稿备份','history'],['refresh-files','刷新文件列表和当前文稿','again'],['trash-open','文稿回收站','archive'],['writing-fullscreen','全屏写作','expand'],['writing-fullscreen-exit','退出全屏','collapse'],['annotations-to-chat','全部发送批注','send'],['annotations-clear','删除全部批注','trash'],['pen-history-open','递笔记录','history'],['pause','暂停','pause'],['pen-history-close','关闭','close'],['pen-version-close','关闭','close'],['pen-note-picker-close','关闭','close'],['search-close','关闭','close'],['backup-close','关闭','close']])if($(id))decorateButton($(id),label,name);
 app.ontoolresult=()=>{};app.addEventListener('hostcontextchanged',applyHost);renderStats();
 setInterval(()=>{if(!document.hidden)renderStats();},500);
-const timeout=setTimeout(()=>{if(!connected){$('host-status').textContent='等待连接';notify('本地服务尚未连接，编辑内容会保留在当前页面。');}},8000);
-app.connect().then(async()=>{connected=true;clearTimeout(timeout);applyHost(app.getHostContext());messageSupported=extensions.message!=null;$('host-status').textContent='已连接宿主';renderDisplay();await workspace.connected();await pen.connected(Boolean(workspace.features.pen));}).catch(error=>{clearTimeout(timeout);$('host-status').textContent='连接未完成';notify(error.message);});
+const warnConnection=text=>{const warning=$('connection-warning');warning.textContent=text;warning.hidden=!text;};
+const timeout=setTimeout(()=>{if(!connected)warnConnection('本地服务尚未连接，请检查工作台。');},8000);
+app.connect().then(async()=>{connected=true;clearTimeout(timeout);applyHost(app.getHostContext());messageSupported=extensions.message!=null;document.documentElement.dataset.hostState='ready';$('host-status').hidden=false;warnConnection('');renderDisplay();await workspace.connected();await pen.connected(Boolean(workspace.features.pen));}).catch(error=>{clearTimeout(timeout);document.documentElement.dataset.hostState='error';$('host-status').hidden=true;warnConnection('本地服务连接失败，请重试。');notify(error.message);});

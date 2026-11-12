@@ -6,6 +6,9 @@ import {z} from 'zod';
 import {createWritingStore} from './writing-suggestions.mjs';
 import {createWorkspaceHistory} from './workspace-history.mjs';
 import {MAX_COVER_BYTES} from './shelf-cover.mjs';
+import {createWorkProgress} from './work-progress.mjs';
+import {fonts} from './font-choices.mjs';
+import {countWords} from './core.mjs';
 
 export const draftSchema=z.object({title:z.string().max(80),body:z.string().max(2000000)});
 export const defaultStatsFields=['work','cover','words','speed','active','idle','status'];
@@ -16,7 +19,7 @@ export const statsPreferencesSchema=z.object({fields:statsFieldsSchema,workPath:
 const coverTypes={'image/png':'png','image/jpeg':'jpg','image/webp':'webp'};
 const storedStatsSchema=z.object({version:z.literal(1),fields:statsFieldsSchema,covers:z.record(z.string(),z.object({id:z.string().uuid(),mime:z.enum(['image/png','image/jpeg','image/webp'])})),pet:petSchema.default(defaultPet)});
 export const recordSchema=z.object({id:z.string().min(1).max(100),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),path:z.string().max(240),title:z.string().max(80),added:z.number().int().min(0).max(10000000),deleted:z.number().int().min(0).max(10000000),activeMs:z.number().min(0).max(86400000),idleMs:z.number().min(0).max(86400000),startedAt:z.string().datetime(),updatedAt:z.string().datetime()});
-export const settingsSchema=z.object({theme:z.enum(['native','glass']).default('native'),glassPalette:z.enum(['glacier','iris','mint','peach','silver','midnight']).default('glacier'),glassFrost:z.number().min(40).max(90).default(70),background:z.string().regex(/^#[0-9a-f]{6}$/i),fontSize:z.number().min(14).max(30).default(18),lineHeight:z.number().min(1.2).max(2.4).default(1.6),paragraphGap:z.number().min(.5).max(3).default(1.3),pageWidth:z.number().min(600).max(1600).default(1100),autoPageWidth:z.boolean().optional(),reduceMotion:z.boolean().default(false),sidebarSide:z.enum(['left','right']).default('left')});
+export const settingsSchema=z.object({theme:z.enum(['native','glass']).default('native'),glassPalette:z.enum(['glacier','iris','mint','peach','silver','midnight']).default('glacier'),glassFrost:z.number().min(40).max(90).default(70),background:z.string().regex(/^#[0-9a-f]{6}$/i),fontFamily:z.enum(Object.keys(fonts)).default('system'),fontSize:z.number().min(14).max(30).default(18),lineHeight:z.number().min(1.2).max(2.4).default(1.6),paragraphGap:z.number().min(.5).max(3).default(1.3),pageWidth:z.number().min(600).max(1600).default(1100),autoPageWidth:z.boolean().optional(),reduceMotion:z.boolean().default(false),sidebarSide:z.enum(['left','right']).default('left'),chapterOrders:z.record(z.string().max(240),z.enum(['asc','desc'])).default({})});
 const trashSchema=z.object({id:z.string().uuid(),path:z.string().max(240),deletedAt:z.string().datetime(),revision:z.string().regex(/^[a-f0-9]{64}$/),restoredAt:z.string().datetime().optional()});
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const missing=error=>error.code==='ENOENT';
@@ -25,6 +28,7 @@ export function createWorkspace(workspacePath) {
   const root=resolve(workspacePath,'码字工作台');
   let pending=Promise.resolve();
   let recovering=null;
+  const countedChapters=new Map();
   function sequential(task) {const next=pending.then(task);pending=next.then(()=>{},()=>{});return next;}
   async function checked(path) {
     const target=resolve(root,path);
@@ -93,7 +97,7 @@ export function createWorkspace(workspacePath) {
     if(/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) throw new Error('文件夹名称不正确。');
     return name;
   }
-  async function scanTree() {
+  async function scanTree(start='',stamps) {
     const files=[],directories=[];
     async function visit(folder,depth=0) {
       if(depth>6) return;
@@ -104,12 +108,31 @@ export function createWorkspace(workspacePath) {
         else if(entry.isFile() && /\.(md|txt)$/i.test(entry.name)) {
           const info=await lstat(await checked(path));
           files.push({path,name:entry.name,size:info.size,updatedAt:info.mtime.toISOString()});
+          if(stamps)stamps.set(path,`${info.size}:${info.mtimeMs}:${info.ctimeMs}`);
         }
       }
     }
-    await visit('');return {files:files.sort((a,b)=>a.path.localeCompare(b.path,'zh-CN')),directories:directories.sort((a,b)=>a.path.localeCompare(b.path,'zh-CN'))};
+    await visit(start,start?start.split('/').length:0);return {files:files.sort((a,b)=>a.path.localeCompare(b.path,'zh-CN')),directories:directories.sort((a,b)=>a.path.localeCompare(b.path,'zh-CN'))};
   }
   async function scan() {return (await scanTree()).files;}
+  async function chapterTotals(files,works,stamps){
+    const totals=Object.fromEntries(works.map(work=>[work.path+'/正文',0]));
+    const live=new Set();
+    for(const file of files){
+      const folder=file.path.split('/').slice(0,2).join('/');
+      if(!Object.hasOwn(totals,folder))continue;
+      live.add(file.path);
+      const stamp=stamps.get(file.path);
+      let cached=countedChapters.get(file.path);
+      if(cached?.stamp!==stamp){
+        try{cached={stamp,words:countWords((await readDocument(file.path)).body)};countedChapters.set(file.path,cached);}
+        catch{totals[folder]=null;continue;}
+      }
+      if(totals[folder]!==null)totals[folder]+=cached.words;
+    }
+    for(const path of countedChapters.keys())if(!live.has(path))countedChapters.delete(path);
+    return totals;
+  }
   async function readDocument(path) {
     path=documentPath(path);
     const target=await checked(path);
@@ -177,9 +200,10 @@ export function createWorkspace(workspacePath) {
       await init();
       const settings=settingsSchema.parse(await readJSON('外观',{background:'#fffdf8'}));
       const draft=draftSchema.parse(await readJSON('草稿',{title:'未命名草稿',body:''}));
-      const tree=await scanTree(),paths=new Set(tree.directories.map(folder=>folder.path));
+      const stamps=new Map(),tree=await scanTree('',stamps),paths=new Set(tree.directories.map(folder=>folder.path));
       const works=tree.directories.filter(folder=>!folder.path.includes('/') && paths.has(folder.path+'/设定') && paths.has(folder.path+'/正文'));
-      return {folder:'码字工作台',...tree,works,settings,draft,features:{trash:true,works:true,statsPreferences:true,writingSuggestions:true,writingRequestContext:true,pen:true,backups:true,search:true,readingPosition:true}};
+      const wordTotals=await chapterTotals(tree.files,works,stamps);
+      return {folder:'码字工作台',...tree,works,wordTotals,settings,draft,features:{trash:true,works:true,statsPreferences:true,writingSuggestions:true,writingRequestContext:true,pen:true,backups:true,search:true,readingPosition:true,workProgress:true,volumes:true}};
     },
     createWork(input) {return sequential(async()=>{
       const name=z.string().trim().min(1).max(80).parse(input.name);
@@ -191,6 +215,37 @@ export function createWorkspace(workspacePath) {
       const folders=['设定','正文','草稿'];
       for(const folder of folders)await mkdir(await checked(`${name}/${folder}`));
       return {work:{name,path:name},directories:folders.map(folder=>({name:folder,path:`${name}/${folder}`}))};
+    });},
+    createVolume(input) {return sequential(async()=>{
+      const work=await checkedWork(input.workPath);
+      const name=folderName(input.name),path=folderPath(`${work}/正文/${name}`);
+      documentPath(path+'/新文稿.md');
+      try{await mkdir(await checked(path));}
+      catch(error){if(error.code==='EEXIST')throw new Error('正文里已有同名卷，请换一个名称。');throw error;}
+      return {folder:{name,path}};
+    });},
+    prepareWorkVolumes(input) {return sequential(async()=>{
+      const work=await checkedWork(input.workPath),body=work+'/正文';
+      const children=await readdir(await checked(body),{withFileTypes:true});
+      const legacy=children.filter(entry=>entry.isFile()&&!entry.name.startsWith('.')&&/\.(md|txt)$/i.test(entry.name));
+      const volumes=children.filter(entry=>entry.isDirectory()&&!entry.name.startsWith('.'));
+      const firstVolume=body+'/第一卷',moves=[],conflicts=[];
+      if(!legacy.length&&volumes.length)return {moves,conflicts};
+      if(!volumes.some(entry=>entry.name==='第一卷')){
+        try{await mkdir(await checked(firstVolume));}
+        catch(error){if(error.code==='EEXIST')throw new Error('正文里的「第一卷」不是可用的文件夹。');throw error;}
+      }
+      for(const entry of legacy){
+        const from=documentPath(body+'/'+entry.name),to=documentPath(firstVolume+'/'+entry.name);
+        try{
+          await lstat(await checked(to));
+          conflicts.push(entry.name);
+          continue;
+        }catch(error){if(!missing(error))throw error;}
+        await renameLinked(from,to);
+        moves.push({from,to});
+      }
+      return {moves,conflicts,firstVolume};
     });},
     async statsPreferences({workPath}={}) {
       await pending;return statsInfo(await readStatsPreferences(),workPath);
@@ -315,7 +370,9 @@ export function createWorkspace(workspacePath) {
     },
   };
   const history=createWorkspaceHistory({checked,atomic,readDocument,saveDocument:saveDocumentInternal,sequential,validatePath:documentPath});
+  const progress=createWorkProgress({checked,atomic,readDocument,saveDocument:saveDocumentInternal,scanTree,folderPath,sequential});
   const writing=createWritingStore({checked,atomic,validatePath:documentPath,readDocument,saveDocument:saveDocumentInternal,sequential,resolvePath:resolveDocumentAlias,
+    readWorkMemory:progress.memory,
     readDraft:()=>readJSON('草稿',{title:'未命名草稿',body:''}),
     commitDraft:async(draft,expectedHash)=>{
       const current=await readJSON('草稿',{title:'未命名草稿',body:''});
@@ -323,7 +380,7 @@ export function createWorkspace(workspacePath) {
       await writeJSON('草稿',draft);return draft;
     },
   });
-  return {...api,createWritingRequest:writing.create,stageChatEdits:writing.stageChatEdits,writingRequests:({path,history,allDrafts})=>writing.list(path,{history,allDrafts}),getWritingRequest:writing.context,updateWritingRequest:writing.update,publishWritingSuggestion:writing.publish,writingVersion:({id,versionId})=>writing.version(id,versionId),listBackups:history.list,readBackup:({id})=>history.read(id),restoreBackup:history.restore,pruneBackups:history.prune,readingPosition:history.view,
+  return {...api,progress,createWritingRequest:writing.create,stageChatEdits:writing.stageChatEdits,writingRequests:({path,history,allDrafts})=>writing.list(path,{history,allDrafts}),getWritingRequest:writing.context,updateWritingRequest:writing.update,publishWritingSuggestion:writing.publish,writingVersion:({id,versionId})=>writing.version(id,versionId),listBackups:history.list,readBackup:({id})=>history.read(id),restoreBackup:history.restore,pruneBackups:history.prune,readingPosition:history.view,
     async searchDocuments({workPath,query,offset=0,limit=100}){if(typeof query!=='string'||!query.trim()||query.length>200)throw new Error('请输入200字以内的搜索内容。');if(workPath)folderPath(workPath);z.number().int().min(0).parse(offset);z.number().int().min(1).max(200).parse(limit);const matches=[];let total=0;for(const file of (await scan()).filter(f=>!workPath||f.path.startsWith(workPath+'/'))){const doc=await readDocument(file.path),source=doc.body.replace(/\r\n?/g,'\n');let at=-query.length;while((at=source.indexOf(query,at+query.length))>=0){if(total>=offset&&matches.length<limit)matches.push({path:file.path,offset:at,excerpt:source.slice(Math.max(0,at-35),at+query.length+50)});total++;}}return {matches,total,offset,hasMore:total>offset+matches.length};},
   };
 }

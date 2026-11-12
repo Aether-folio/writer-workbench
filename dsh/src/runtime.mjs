@@ -14,6 +14,7 @@
 import {readFile, stat} from 'node:fs/promises';
 import {basename} from 'node:path';
 import {createWorkspace} from '../../src/workspace.mjs';
+import {readHandwritingFont} from '../../src/handwriting-fonts.mjs';
 
 /** 与 Codex 版保持一致的存储目录名（不迁移、不改名）。 */
 export const STORAGE_FOLDER = '码字工作台';
@@ -32,6 +33,12 @@ export const CLIENT_ONLINE_WINDOW_MS = 5000;
 function createApi(workspace) {
   return {
     workspace_info: () => workspace.info(),
+    read_handwriting_font: readHandwritingFont,
+    start_work_progress: input => workspace.progress.start(input),
+    work_progress_status: input => workspace.progress.status(input),
+    cancel_work_progress: input => workspace.progress.cancel(input),
+    get_work_progress_chapter: input => workspace.progress.next(input),
+    submit_work_progress_chapter: input => workspace.progress.submit(input),
     create_writing_request: input => workspace.createWritingRequest(input),
     writing_requests: input => workspace.writingRequests(input),
     get_writing_request: input => workspace.getWritingRequest(input),
@@ -45,6 +52,8 @@ function createApi(workspace) {
     reading_position: input => workspace.readingPosition(input),
     search_documents: input => workspace.searchDocuments(input),
     create_work: input => workspace.createWork(input),
+    create_volume: input => workspace.createVolume(input),
+    prepare_work_volumes: input => workspace.prepareWorkVolumes(input),
     stats_preferences: input => workspace.statsPreferences(input ?? {}),
     save_stats_preferences: input => workspace.saveStatsPreferences(input),
     read_document: input => workspace.readDocument(input?.path),

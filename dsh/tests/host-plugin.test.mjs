@@ -55,7 +55,7 @@ test('apply registers the HTTP route and model tools including AI return', async
     assert.equal(routes.length, 1);
     assert.equal(routes[0].kind, 'prefix');
     assert.equal(routes[0].path, '/writer-workbench');
-    assert.deepEqual(tools.map(tool => tool.name).sort(), ['get_writing_request', 'open_workbench', 'publish_writing_suggestion', 'workbench_status']);
+    assert.deepEqual(tools.map(tool => tool.name).sort(), ['get_work_progress_chapter', 'get_writing_request', 'open_workbench', 'publish_writing_suggestion', 'submit_work_progress_chapter', 'workbench_status']);
     for (const tool of tools) {
       assert.equal(tool.parameters.type, 'object');
       assert.equal(tool.output.schema.type, 'object');

@@ -1,6 +1,6 @@
 {
   "name": "writer-workbench",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "test:dsh": "node --test dsh/tests/*.test.mjs",
     "test:browser": "node tests/themes.browser.cjs && node tests/pen.browser.cjs && node tests/pen-interactions.browser.cjs && node tests/pen-layout.browser.cjs && node tests/paragraph-editor.browser.cjs && node tests/shelf.browser.cjs && node tests/ui-controls.browser.cjs && node tests/refresh-document.browser.cjs && node tests/chat-edits.browser.cjs && node tests/docked-stats.browser.cjs && node tests/trash-focus.browser.cjs && node tests/dsh-pen.browser.cjs",
     "test:themes": "node tests/themes.browser.cjs",
+    "test:progress": "node tests/work-progress.browser.cjs",
     "test:focus": "node tests/trash-focus.browser.cjs",
     "privacy:check": "node scripts/check-public-files.mjs",
     "test:shelf": "node tests/shelf.browser.cjs",

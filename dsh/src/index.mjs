@@ -14,6 +14,8 @@ import {fileURLToPath} from 'node:url';
 import {createWorkbenchRuntime, STORAGE_FOLDER} from './runtime.mjs';
 import {tool} from './tool.mjs';
 import {resolveWorkspaceSetting} from '../../src/workspace-config.mjs';
+import {progressAgentTools} from '../../src/work-progress.mjs';
+import {z} from 'zod';
 
 export const name = 'writer-workbench';
 export const inject = ['webServer', 'tools'];
@@ -58,6 +60,14 @@ export function apply(ctx, config = {}) {
 
   ctx.effect(() => {
     const disposers = [];
+    for(const {name,description,schema} of progressAgentTools){
+      const {$schema,...parameters}=z.toJSONSchema(schema,{target:'draft-7'});
+      disposers.push(ctx.tools.register(tool({
+        name,description,parameters,
+        output:{schema:{type:'object',properties:{},required:[]},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]},
+        execute:async(args,exec)=>{exec.signal.throwIfAborted();return runtime.callApi(name,args);},
+      })));
+    }
     disposers.push(ctx.tools.register(tool({
       name:'get_writing_request',
       description:'收到【递笔工作台 · 递笔】、旧标题「【码字工作台 · 递笔】」或旧 AI 插入消息后，逐项按 path/instruction 读取隐藏的定位、选区、资料、上一版及 requestId/generation。若返回 requests 数组须逐项按各自 ID/轮次处理，不合并目标。仅讨论用 mode=discussion 回传并正常回答；明确补写用 insert；明确改写选区用 replace。用户采纳后才改正文，段落单换行。',

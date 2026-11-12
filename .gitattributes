@@ -4,4 +4,5 @@
 *.md text eol=lf
 *.gif binary
 *.png binary
+*.ttf binary
 

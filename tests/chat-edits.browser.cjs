@@ -22,7 +22,7 @@ async function main(){
     await track.waitFor({state:'visible'});
     assert.ok(await track.locator('span').count()>0);
 
-    const sibling=await workspace.saveDocument({path:'测试作品/正文/第二章.md',body:'另一章的原文。'});
+    const sibling=await workspace.saveDocument({path:'测试作品/正文/第一卷/第二章.md',body:'另一章的原文。'});
     await workspace.stageChatEdits({path:sibling.path,instruction:'润色第二章',edits:[
       {original:'另一章的原文。',replacement:'另一章的建议。'},
     ]});

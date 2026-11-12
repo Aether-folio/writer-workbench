@@ -140,7 +140,7 @@ async function fixture(browser, {works, files, cover, empty, background = '#fffd
     frame.srcdoc = html;
   }, {html, works, files, cover, empty, background, draft});
   const frame = page.frameLocator('#app');
-  await frame.locator('#host-status').filter({hasText: '已连接宿主'}).waitFor();
+  await frame.locator('html[data-host-state=ready]').waitFor();
   return {page, frame, errors};
 }
 

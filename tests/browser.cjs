@@ -135,9 +135,9 @@ async function fixture(browser,messageEnabled,displayOptions={},testApi) {
     frame.srcdoc=html;
   },{html,messageEnabled,displayOptions});
   const frame=page.frameLocator('#app');
-  try { await frame.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor(); }
+  try { await frame.locator('html[data-host-state=ready]').waitFor(); }
   catch(error) {
-    console.error(JSON.stringify({errors,requests:await page.evaluate(()=>window.testRequests),status:await frame.locator('#host-status').textContent(),feedback:await frame.locator('#feedback').textContent()}));
+    console.error(JSON.stringify({errors,requests:await page.evaluate(()=>window.testRequests),status:await frame.locator('#connection-warning').textContent(),feedback:await frame.locator('#feedback').textContent()}));
     throw error;
   }
   // 工作台从书架进入；编辑器相关用例先打开书架上的「散篇文稿」。
@@ -238,7 +238,7 @@ if(require.main===module) (async()=>{
     assert.equal(await frame.locator('.annotation-card').count(),2);
     assert.ok((await frame.locator('#annotation-list').textContent()).includes('添加过程中修改的新版本'));
     await page.locator('#app').evaluate(el=>{el.srcdoc=el.srcdoc;});
-    await frame.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();
+    await frame.locator('html[data-host-state=ready]').waitFor();
     await frame.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
     await frame.locator('#editor-page').waitFor({state:'visible'});
     assert.equal(await frame.locator('.annotation-card').count(),0);
@@ -317,7 +317,7 @@ if(require.main===module) (async()=>{
     await frame.locator('#appearance-status').filter({hasText:'所有设置已保存'}).waitFor();
     await frame.locator('#appearance-close').click();
     await page.locator('#app').evaluate(el=>{el.srcdoc=el.srcdoc;});
-    await frame.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();
+    await frame.locator('html[data-host-state=ready]').waitFor();
     await frame.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
     await frame.locator('#editor-page').waitFor({state:'visible'});
     await frame.locator('.file-entry').filter({hasText:'新章节.md'}).waitFor();
@@ -330,20 +330,7 @@ if(require.main===module) (async()=>{
     await frame.locator('#annotation-body').fill('临时批注用于检查窄窗布局');
     await frame.locator('#annotation-save').click();
     report.checks.push('six background presets and custom color persist after reopen; manuscript list persists; annotations clear on reload');
-    const beforeSidebar=await editor.evaluate(el=>el.value);
-    const outlineBody='# 开篇\n'+('这一行是用于检查自动换行后大纲定位的正文。'.repeat(10)+'\n').repeat(30)+'## 转折\n新的段落';
-    await editor.fill(outlineBody);
-    await frame.locator('#sidebar-outline-tab').click();
-    assert.equal(await frame.locator('.outline-entry').count(),2);
-    await frame.locator('.outline-entry').filter({hasText:'转折'}).click();
-    assert.equal(await editor.evaluate(el=>el.selectionStart),outlineBody.indexOf('## 转折'));
-    assert.ok(await editor.evaluate(el=>el.scrollTop>0));
-    assert.equal(await editor.evaluate(el=>el.value),outlineBody);
-    await frame.locator('#sidebar-files-tab').focus();
-    await frame.locator('#sidebar-files-tab').press('ArrowRight');
-    assert.equal(await frame.locator('#sidebar-outline-tab').getAttribute('aria-selected'),'true');
-    await editor.fill(beforeSidebar);
-    await frame.locator('#sidebar-files-tab').click();
+    assert.equal(await frame.locator('#sidebar-files-tab,#sidebar-outline-tab').count(),0);
     await frame.locator('#sidebar-toggle:visible, #sidebar-reopen:visible').click();
     assert.equal(await frame.locator('#workbench-sidebar').isVisible(),false);
     assert.equal(await frame.locator('#stats-float').isVisible(),true);
@@ -677,7 +664,7 @@ if(require.main===module) (async()=>{
     assert.ok(await pf.locator('#stats-float').evaluate(panel=>panel.scrollWidth<=panel.clientWidth));
     await pp.evaluate(()=>{window.testLegacyPets=true;});
     await pp.locator('#app').evaluate(frame=>{frame.srcdoc=frame.srcdoc;});
-    await pf.locator('#host-status').filter({hasText:'已连接宿主'}).waitFor();
+    await pf.locator('html[data-host-state=ready]').waitFor();
     await pf.locator('body').evaluate(()=>document.getElementById('nav-editor').click());
     await pf.locator('#editor-page').waitFor({state:'visible'});
     await pf.locator('#stats-settings:not([disabled])').waitFor();await settings();

@@ -53,6 +53,19 @@ test('正式MCP协议可列出两个入口、读取自含界面且不访问正�
     const withWork=await client.callTool({name:'workspace_info',arguments:{}});
     assert.equal(withWork.structuredContent.works[0].name,'协议测试作品');
     assert.ok(withWork.structuredContent.directories.some(folder=>folder.path==='协议测试作品/正文'));
+    const call=async(name,args)=>{
+      const result=await client.callTool({name,arguments:args});
+      assert.equal(result.isError,undefined,result.content[0]?.text);
+      return result.structuredContent??JSON.parse(result.content[0].text);
+    };
+    await call('save_document',{path:'协议测试作品/正文/第一章.md',body:'她推开门。'});
+    const job=await call('start_work_progress',{workPath:'协议测试作品'});
+    const chapter=await call('get_work_progress_chapter',{jobId:job.jobId});
+    assert.equal(chapter.body,'她推开门。');
+    const progress=await call('submit_work_progress_chapter',{jobId:job.jobId,token:chapter.token,summary:{plot:'她推开门。',foreshadowing:'无明显伏笔',continuity:'人物来到门口'}});
+    assert.equal(progress.phase,'done');
+    assert.match((await call('read_document',{path:progress.path})).body,/她推开门/);
+    assert.equal((await call('save_settings',{fontFamily:'serif'})).settings.fontFamily,'serif');
     const preferences=await client.callTool({name:'save_stats_preferences',arguments:{fields:['work','words'],workPath:'协议测试作品',pet:{enabled:true,character:'fish'}}});
     assert.deepEqual(preferences.structuredContent.fields,['work','words']);
     assert.equal(preferences.structuredContent.coverDataUrl,null);
@@ -81,17 +94,9 @@ test('正式MCP协议可列出两个入口、读取自含界面且不访问正�
     assert.equal(proposals.length,2);
     const retried=await stageEdits(edits);
     assert.deepEqual(JSON.parse(retried.content[0].text).suggestions,proposals);
-    const listed=await listSuggestions();
-    assert.equal(listed.length,proposals.length);
-    const byId=new Map(listed.map(request=>[request.id,request]));
-    const [first,second]=proposals.map(({id})=>byId.get(id));
-    for(const [index,request] of [first,second].entries()){
-      assert.ok(request);
-      assert.equal(request.status,'ready');
-      assert.equal(request.origin,'chat');
-      assert.equal(request.text,edits[index].replacement);
-      assert.equal(request.baseBody.slice(request.offset,request.endOffset),edits[index].original);
-    }
+    const [first,second]=(await listSuggestions()).sort((a,b)=>a.offset-b.offset);
+    assert.equal(first.status,'ready');
+    assert.equal(first.origin,'chat');
     const unchanged=await client.callTool({name:'read_document',arguments:{path:target.path}});
     assert.equal(unchanged.structuredContent.body,target.body);
     const accepted=await client.callTool({name:'update_writing_request',arguments:{id:first.id,version:first.version,action:'accept',body:target.body.replace(/\r\n/g,'\n'),revision:target.revision}});

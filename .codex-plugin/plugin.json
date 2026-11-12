@@ -1,6 +1,6 @@
 {
   "name": "writer-workbench",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "description": "Codex 内的本地递笔工作台：递笔协作、原位改写对照、持久批注、历史恢复和码字日历。",
   "author": {
     "name": "Local Writing Tools"

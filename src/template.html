@@ -23,19 +23,26 @@
             </span>
             <div><h1>递笔工作台</h1></div>
           </div>
-          <div class="header-actions"><button id="shelf-home" class="shelf-home" type="button" aria-pressed="true" title="返回书架"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 3.5h5v12.5H3zM8 6h4v10H8zM12 4.6l3.6-.8 2 11.9-3.6.8z"/><path d="M2 16.5h16"/></svg><span>书架</span></button><span id="host-status" role="status">正在连接 Codex…</span><button id="fullscreen" type="button" disabled hidden>展开工作台</button><span id="display-status" role="status" hidden></span><div class="header-tools"><button id="appearance-open" class="icon-button" type="button" aria-label="设置" aria-controls="appearance-dialog" title="设置"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 2h4l.5 2.3 2 .9L16.5 4l2 3.5-1.7 1.6v1.8l1.7 1.6-2 3.5-2-1.2-2 .9L12 18H8l-.5-2.3-2-.9L3.5 16l-2-3.5 1.7-1.6V9.1L1.5 7.5l2-3.5 2 1.2 2-.9L8 2Z"/><circle cx="10" cy="10" r="2.7"/></svg></button><button id="stats-toggle" class="icon-button" type="button" aria-label="隐藏码字统计" aria-expanded="true" aria-controls="stats-float" title="隐藏码字统计"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg></button></div></div>
         </header>
       <aside id="workbench-files" class="files-sidebar" aria-label="文稿侧栏">
-        <div class="sidebar-tabs-row"><div class="sidebar-tabs" role="tablist" aria-label="文稿导航"><button id="sidebar-files-tab" type="button" role="tab" aria-selected="true" aria-controls="sidebar-files-panel">文件</button><button id="sidebar-outline-tab" type="button" role="tab" aria-selected="false" aria-controls="sidebar-outline-panel" tabindex="-1">大纲</button></div></div>
-        <div id="sidebar-files-panel" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-files-tab">
-          <div class="files-heading"><h2>递笔工作台</h2><div class="file-actions"><button id="refresh-files" class="icon-button" type="button" aria-label="刷新文件列表和当前文稿" title="刷新文件列表和当前文稿">↻</button><button id="trash-open" class="trash-open-button" type="button" aria-label="文稿回收站" title="打开回收站"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 7h14v10H3zM2 3h16v4H2zM7 10h6m-3 0v4m-2-2 2 2 2-2"/></svg><span>回收站</span></button></div></div>
+        <div id="sidebar-files-panel" class="sidebar-panel">
+          <div class="file-tools" role="group" aria-label="文稿工具">
+            <button id="work-progress-start" class="ghost-icon" type="button" aria-label="一键整理" aria-controls="work-progress" title="一键整理">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 7 2 2 4-4m-6 12 2 2 4-4M11 6h9m-9 6h9m-9 6h9"/></svg>
+            </button>
+            <div class="file-actions">
+              <button id="backup-open" type="button" aria-label="文稿备份" title="文稿备份">文稿备份</button>
+              <button id="refresh-files" type="button" aria-label="刷新文件列表和当前文稿" title="刷新文件列表和当前文稿">↻</button>
+              <button id="trash-open" type="button" aria-label="文稿回收站" title="打开回收站">回收站</button>
+            </div>
+          </div>
+          <section id="work-progress" class="work-progress" aria-label="章节整理" hidden>
+            <div class="work-progress-head"><strong>章节进度</strong><span id="work-progress-count"></span><button id="work-progress-open" type="button" hidden>查看进度</button><button id="work-progress-cancel" type="button" hidden>停止</button></div>
+            <div id="work-progress-bar" class="work-progress-track" role="progressbar" aria-label="章节整理进度" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+            <p id="work-progress-message" role="status"></p>
+          </section>
           <div id="file-list" class="file-list" aria-label="文稿文件树"></div>
           <p id="files-status" class="subtle" role="status">正在扫描文件…</p>
-        </div>
-        <div id="sidebar-outline-panel" class="sidebar-panel" role="tabpanel" aria-labelledby="sidebar-outline-tab" hidden>
-          <div class="files-heading"><h2>当前文稿</h2></div>
-          <nav id="outline-list" class="outline-list" aria-label="文稿大纲"></nav>
-          <p id="outline-status" class="subtle" role="status">使用 Markdown 标题后，大纲会显示在这里。</p>
         </div>
         <aside id="stats-float" class="stats-float" aria-label="码字统计">
           <section class="stats-panel">
@@ -45,7 +52,7 @@
               <div class="stats-actions"><button id="stats-settings" class="icon-button" type="button" aria-label="码字统计设置" title="码字统计设置"><svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 2h4l.5 2.3 2 .9L16.5 4l2 3.5-1.7 1.6v1.8l1.7 1.6-2 3.5-2-1.2-2 .9L12 18H8l-.5-2.3-2-.9L3.5 16l-2-3.5 1.7-1.6V9.1L1.5 7.5l2-3.5 2 1.2 2-.9L8 2Z"/><circle cx="10" cy="10" r="2.7"/></svg></button><button id="nav-history" class="icon-button" type="button" aria-label="码字日历" aria-pressed="false" title="码字日历"><svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12.5" rx="1.5"/><path d="M6.5 2.5v4m7-4v4M3 8.5h14M6 11.5h2m3 0h2m-7 3h2"/></svg></button><button id="stats-hide" class="icon-button" type="button" aria-label="隐藏码字统计" title="隐藏">×</button></div>
             </div>
             <p id="stats-work" class="stats-work">未选择作品</p>
-            <div id="stats-content" class="stats-content"><figure id="stats-cover-block" class="stats-cover-block" hidden><img id="stats-cover-image" alt="作品封面" hidden><div id="stats-cover-fallback" class="stats-cover-fallback"><span>创作手记</span><strong id="stats-cover-name"></strong><i aria-hidden="true"></i></div></figure>
+            <div id="stats-content" class="stats-content"><div id="stats-media" class="stats-media"><figure id="stats-cover-block" class="stats-cover-block" hidden><img id="stats-cover-image" alt="作品封面" hidden><div id="stats-cover-fallback" class="stats-cover-fallback"><span>创作手记</span><strong id="stats-cover-name"></strong><i aria-hidden="true"></i></div></figure></div>
             <div id="stats-grid" class="stats-grid">
               <div data-stat-field="words"><span>本次新增</span><strong id="session-count">0</strong></div>
               <div data-stat-field="speed"><span>时速 · 字/时</span><strong id="writing-speed">—</strong></div>
@@ -56,16 +63,20 @@
           </section>
         </aside>
       </aside>
-      <aside class="writing-sidebar" aria-label="批注">
+      <aside class="writing-sidebar" aria-label="批注" hidden>
         <section class="annotations-panel" aria-labelledby="annotations-heading">
           <div class="annotations-heading"><h2 id="annotations-heading">批注</h2><span id="annotation-count" class="subtle">0 条</span></div>
-          <div class="annotation-actions"><button id="annotations-to-chat" type="button" disabled title="全部发送">全部发送</button><button id="annotations-clear" type="button" disabled title="删除全部批注">全部删除</button><button id="pen-history-open" type="button" title="递笔记录">递笔记录</button></div>
+          <div class="annotation-actions"><button id="annotations-to-chat" type="button" disabled title="全部发送">全部发送</button><button id="annotations-clear" type="button" disabled title="删除全部批注">全部删除</button></div>
           <p id="annotation-chat-status" class="subtle" role="status" hidden></p>
           <div id="annotation-list" class="annotation-list"></div>
         </section>
       </aside>
+      <footer class="workspace-actions" aria-label="工作区工具">
+        <div class="header-actions"><button id="shelf-home" class="shelf-home" type="button" aria-pressed="true" title="返回书架"><svg viewBox="0 0 20 20" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 3.5h5v12.5H3zM8 6h4v10H8zM12 4.6l3.6-.8 2 11.9-3.6.8z"/><path d="M2 16.5h16"/></svg><span>书架</span></button><span id="host-status" role="status" hidden>已连接宿主</span><button id="fullscreen" type="button" disabled hidden>展开工作台</button><span id="display-status" role="status" hidden></span><div class="header-tools"><button id="compare-files-open" type="button" aria-label="文本对照" title="文本对照">文本对照</button><button id="appearance-open" class="icon-button" type="button" aria-label="设置" aria-controls="appearance-dialog" title="设置"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 2h4l.5 2.3 2 .9L16.5 4l2 3.5-1.7 1.6v1.8l1.7 1.6-2 3.5-2-1.2-2 .9L12 18H8l-.5-2.3-2-.9L3.5 16l-2-3.5 1.7-1.6V9.1L1.5 7.5l2-3.5 2 1.2 2-.9L8 2Z"/><circle cx="10" cy="10" r="2.7"/></svg></button><button id="stats-toggle" class="icon-button" type="button" aria-label="隐藏码字统计" aria-expanded="true" aria-controls="stats-float" title="隐藏码字统计"><svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l3 2"/></svg></button></div></div>
+          <p id="connection-warning" class="subtle" role="status" hidden></p>
+      </footer>
       </div>
-      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度" aria-valuemin="220" aria-valuemax="560" title="拖动调整侧栏宽度，双击恢复默认" tabindex="0"></div>
+      <div id="sidebar-resizer" class="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度" aria-valuemin="220" aria-valuemax="248" title="拖动调整侧栏宽度，双击恢复默认" tabindex="0"></div>
       <div class="workbench-content">
       <section id="shelf-page" class="shelf-page" aria-labelledby="shelf-title">
         <div class="shelf-head">
@@ -81,8 +92,7 @@
       <section class="document" aria-label="正文编辑区">
         <div class="document-header">
           <label class="sr-only" for="draft-title">文稿标题</label><input id="draft-title" value="未命名草稿" maxlength="80" title="修改后按回车或移开焦点，可重命名当前文稿；Esc 取消">
-          <span id="word-total">0 字</span><button id="pen-open" type="button" title="递笔" aria-label="递笔">递笔</button><button id="search-open" type="button" title="查找与替换" aria-label="查找与替换">查找</button>
-          <button id="compare-files-open" type="button" title="按文稿路径比较文本">文本对照</button><button id="backup-open" type="button" title="版本备份" aria-label="版本备份">备份</button>
+          <span id="word-total">0 字</span><button id="pen-open" type="button" title="递笔" aria-label="递笔">递笔</button><button id="pen-history-open" type="button" title="递笔记录">递笔记录</button><button id="search-open" type="button" title="查找与替换" aria-label="查找与替换">查找</button>
           <button id="fullscreen-stats-toggle" class="ghost-icon" type="button" hidden aria-controls="stats-float" aria-expanded="false" aria-label="展开码字统计" title="展开码字统计"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l4 3"/></svg></button>
           <button id="writing-fullscreen" type="button" title="全屏写作">⛶ 全屏</button><button id="writing-fullscreen-exit" type="button" hidden title="退出全屏写作（Esc）">退出全屏</button>
         </div>
@@ -111,6 +121,8 @@
       <button type="button" role="menuitem" data-action="open">打开</button>
       <button type="button" role="menuitem" data-action="rename">重命名</button>
       <button type="button" role="menuitem" data-action="create">在此新建文稿</button>
+      <button type="button" role="menuitemradio" data-action="asc" aria-checked="false">正序</button>
+      <button type="button" role="menuitemradio" data-action="desc" aria-checked="false">倒序</button>
       <button type="button" role="menuitem" data-action="delete">移至回收站</button>
     </div>
     <div id="shelf-menu" class="file-menu" role="menu" aria-label="作品操作" hidden>
@@ -181,9 +193,12 @@
             <section id="settings-typography" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-typography" hidden>
               <div class="settings-section-heading"><h3>正文排版</h3><p>留一点呼吸，让文字读起来更舒服。</p></div>
               <div class="settings-preference"><label for="auto-page-width">正文随窗口拉宽</label><input id="auto-page-width" type="checkbox" role="switch" checked></div>
+              <label class="settings-row">全局字体<select id="type-family"><option value="system">系统默认</option><option value="sans">Noto 黑体</option><option value="serif">Noto 宋体</option><option value="kaiti">楷体（本机）</option><option value="longcang">龙藏体</option><option value="mashan">马善政毛笔楷书</option></select></label>
+              <p class="subtle">龙藏体与马善政毛笔楷书随工作台提供。Noto 和楷体优先使用本机字体。</p>
+              <p id="font-load-status" class="subtle" role="status"></p>
               <div class="typography-grid"><label>字号 <span>px</span><input id="type-size" type="number" min="14" max="30" value="18"></label><label>行高 <span>倍</span><input id="type-height" type="number" min="1.2" max="2.4" step="0.1" value="1.6"></label><label>段落间距 <span>em</span><input id="type-gap" type="number" min="0.5" max="3" step="0.1" value="1.3"></label><label>正文宽度 <span>px</span><input id="type-width" type="number" min="600" max="1600" step="50" value="1100"></label></div>
               <p class="settings-hint">写作时也可按住 Ctrl（Mac 为 ⌘）滚动滚轮调节字号。</p>
-              <div class="type-preview" aria-label="排版实时预览"><span class="settings-eyebrow">排版预览</span><div><p>雨停在凌晨三点。</p><p>他推开旧书店的门，风铃轻轻响了一声。灯光落在摊开的笔记上，故事才刚刚开始。</p></div></div>
+              <div id="type-preview" class="type-preview" aria-label="排版实时预览"><span class="settings-eyebrow">排版预览 <span id="type-preview-font">系统默认</span></span><div><p>雨停在凌晨三点。</p><p>他推开旧书店的门，风铃轻轻响了一声。灯光落在摊开的笔记上，故事才刚刚开始。</p></div></div>
             </section>
             <section id="settings-layout" class="settings-section" role="tabpanel" aria-labelledby="settings-tab-layout" hidden>
               <div class="settings-section-heading"><h3>布局与体验</h3><p>把常用的东西，放在顺手的位置。</p></div>
@@ -199,6 +214,7 @@
     <dialog id="delete-dialog" aria-labelledby="delete-heading"><div class="simple-dialog"><h2 id="delete-heading">移至回收站</h2><p id="delete-filename" class="dialog-filename"></p><p class="subtle">文稿会保留在工作台回收站，可以恢复。删除当前文稿前会先保存最新修改。</p><p id="delete-error" class="dialog-error" role="alert"></p><div class="dialog-footer"><button id="delete-cancel" type="button" autofocus>取消</button><button id="delete-confirm" type="button" class="danger">移至回收站</button></div></div></dialog>
     <dialog id="trash-delete-dialog" aria-labelledby="trash-delete-heading"><div class="simple-dialog"><h2 id="trash-delete-heading">彻底删除文稿</h2><p id="trash-delete-filename" class="dialog-filename"></p><p class="subtle">删除后无法从回收站恢复。</p><p id="trash-delete-error" class="dialog-error" role="alert"></p><div class="dialog-footer"><button id="trash-delete-cancel" type="button" autofocus>取消</button><button id="trash-delete-confirm" type="button" class="danger">彻底删除</button></div></div></dialog>
     <dialog id="trash-dialog" aria-labelledby="trash-heading"><div class="simple-dialog"><div class="dialog-heading"><h2 id="trash-heading">文稿回收站</h2><button id="trash-close" type="button">完成</button></div><p id="trash-status" class="subtle" role="status"></p><p id="trash-error" class="dialog-error" role="alert"></p><div id="trash-list" class="trash-list"></div></div></dialog>
+    <dialog id="volume-dialog" aria-labelledby="volume-heading"><div class="simple-dialog"><h2 id="volume-heading">新建卷</h2><label for="volume-name">卷名</label><input id="volume-name" maxlength="80" placeholder="例如：第二卷"><p id="volume-error" class="dialog-error" role="alert"></p><div class="dialog-footer"><button id="volume-cancel" type="button">取消</button><button id="volume-create" class="primary" type="button">新建卷</button></div></div></dialog>
     <dialog id="work-dialog" aria-labelledby="work-heading"><div class="simple-dialog"><h2 id="work-heading">添加作品</h2><label for="work-name">作品名</label><input id="work-name" maxlength="80" placeholder="作品名"><p id="work-hint" class="subtle">以作品名创建文件夹，并自动建立“设定”、“正文”和“草稿”三个子文件夹。大纲、人物设定等放在“设定”中。</p><p id="work-error" class="dialog-error" role="alert"></p><div class="dialog-footer"><button id="work-cancel" type="button">取消</button><button id="work-create" class="primary" type="button">添加作品</button></div></div></dialog>
     <dialog id="stats-settings-dialog" aria-labelledby="stats-settings-heading"><div class="simple-dialog stats-settings-form">
       <div class="dialog-heading"><div><h2 id="stats-settings-heading">码字统计设置</h2><p id="stats-settings-work" class="subtle"></p></div><span class="settings-badge">个性化</span></div>

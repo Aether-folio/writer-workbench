@@ -1,6 +1,6 @@
 {
   "name": "dsh-writer-workbench",
-  "version": "0.5.0-dsh.1",
+  "version": "0.5.2-dsh.1",
   "private": true,
   "description": "递笔工作台的 DeepSeek Harness 适配层：复用原 Codex 插件的编辑器界面与本地数据，提供 open_workbench / workbench_status 工具和聊天草稿引用。",
   "type": "module",

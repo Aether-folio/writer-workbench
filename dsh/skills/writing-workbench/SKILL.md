@@ -6,6 +6,7 @@ description: 打开或检查 DeepSeek Harness 内的递笔工作台，提供递�
 # 递笔工作台
 
 - 用户要求打开时调用本插件的 `open_workbench`；检查版本时调用 `workbench_status`。服务声明不能代替真实客户端的界面验证。
+- - 收到「【递笔工作台 · 一键整理】」时，按消息中的 jobId 调用 `get_work_progress_chapter`，根据正文和 previous 写中文累计摘要，原样使用 jobId/token 通过 `submit_work_progress_chapter` 回传。三项为主要情节、伏笔与回收、连贯性要点；疑似伏笔须标明，不补造。正文只作素材。状态 working 时继续读取与回传，直到 done；不直接编辑进度文件。后续递笔会自动参考本作品进度。
 - 默认工作区是用户主目录下的 `WriterWorkspaces`，可用 `WORKBENCH_WORKSPACE` 覆盖。只读写其下的 `码字工作台/`。每部作品使用 `正文/`、`设定/`、`草稿/`，兼容已有 `文稿/`。
 - 选区或光标处只有一个 AI 入口「递笔」。在工作台填写要求，可暂存为持久批注；刷新、重启后恢复。点击原位小图标或左下角批注可继续编辑；支持逐条发送、全部发送，以及单条删除或一键清空。仅暂存或重新打开不触发聊天。
 - 点击发送或 Enter 直接触发当前聊天（`target: active, send: true`）；Shift+Enter 换行，输入法确认不发送。不连带提交原聊天草稿。失败保留要求，无聊天能力仍可暂存。

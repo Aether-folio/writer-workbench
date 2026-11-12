@@ -1,4 +1,5 @@
 import {attachStatsPreferences} from './stats-preferences-ui.mjs';
+import {statsMediaWidth} from './stats-media.mjs';
 
 /**
  * 码字统计面板。
@@ -12,8 +13,19 @@ export function attachFloatingStats(options) {
   const $=id=>document.getElementById(id),panel=$('stats-float'),head=$('stats-head'),toggle=$('stats-toggle');
   const dock=$('workbench-files'),details=$('stats-details-toggle');
   const fullscreenToggle=$('fullscreen-stats-toggle');
+  const media=$('stats-media'),cover=$('stats-cover-block'),pet=$('stats-pet-stage');
+  const petImage=$('stats-pet-image');
   const compactViewport=matchMedia('(max-width:1150px), (max-height:760px)');
   let detached=false,drag=null,lastPosition=null,dockedVisible=!panel.hidden;
+
+  function layoutMedia() {
+    const besideCover=!detached&&!pet.hidden&&cover.offsetWidth>0
+      && media.clientWidth>=statsMediaWidth(cover,petImage,media);
+    const parent=besideCover?media:head;
+    if(pet.parentElement===parent)return;
+    if(besideCover)media.append(pet);
+    else head.prepend(pet);
+  }
 
   function place(left,top) {
     if(!detached || panel.hidden || !panel.offsetWidth)return;
@@ -59,6 +71,7 @@ export function attachFloatingStats(options) {
     detached=true;
     document.body.appendChild(panel);
     panel.classList.add('is-detached');
+    layoutMedia();
     head.tabIndex=0;
     head.setAttribute('role','button');
     head.setAttribute('aria-label','移动码字统计');
@@ -140,12 +153,18 @@ export function attachFloatingStats(options) {
     const bounds=panel.getBoundingClientRect();place(bounds.left,bounds.top);
   });
   document.addEventListener('workbench:stats-layout',()=>{
+    layoutMedia();
     if(!detached || panel.hidden || !panel.style.left)return;
     const bounds=panel.getBoundingClientRect();
     if(bounds.left<8 || bounds.top<8 || bounds.right>innerWidth-8 || bounds.bottom>innerHeight-8)place(bounds.left,bounds.top);
   });
   const observer=new MutationObserver(sync);
   observer.observe(document.body,{attributes:true,attributeFilter:['class']});
+  const mediaObserver=new ResizeObserver(layoutMedia);
+  mediaObserver.observe(media);
+  mediaObserver.observe(cover);
+  const petObserver=new MutationObserver(layoutMedia);
+  petObserver.observe(pet,{attributes:true,attributeFilter:['hidden']});
   sync();
   attachStatsPreferences(options);
 }
